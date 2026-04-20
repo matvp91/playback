@@ -85,9 +85,9 @@ function parseAdaptationSet(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
+  const id = getAdaptationSetId(adaptationSet, representations);
   const type = resolveType(adaptationSet, representations);
   const codec = resolveCodec(adaptationSet, representations);
-  const id = `${type}:${codec}`;
 
   if (type === MediaType.VIDEO) {
     return {
@@ -102,7 +102,7 @@ function parseAdaptationSet(
       XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
     );
     return {
-      id: `${id}:${language}`,
+      id,
       type,
       codec,
       language,
@@ -114,7 +114,7 @@ function parseAdaptationSet(
       XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
     );
     return {
-      id: `${id}:${language}`,
+      id,
       type,
       codec,
       language,
