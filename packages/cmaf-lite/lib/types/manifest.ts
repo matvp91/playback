@@ -25,6 +25,7 @@ export interface Manifest {
  * @public
  */
 export interface BaseSwitchingSet {
+  id: string;
   /** Codec string. */
   codec: string;
 }
@@ -60,6 +61,8 @@ export interface AudioSwitchingSet extends BaseSwitchingSet {
  */
 export interface SubtitleSwitchingSet extends BaseSwitchingSet {
   type: MediaType.SUBTITLE;
+  /** Language */
+  language: string;
   /** Subtitle tracks. */
   tracks: SubtitleTrack[];
 }
@@ -83,6 +86,7 @@ export type SwitchingSet<T extends MediaType = MediaType> = Extract<
  * @public
  */
 export interface BaseTrack {
+  id: string;
   /** Bitrate in bits per second. */
   bandwidth: number;
   /** Ordered chunks on the presentation timeline. */

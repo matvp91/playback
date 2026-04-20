@@ -1,5 +1,5 @@
 import type * as txml from "txml";
-import type { AudioSwitchingSet, SwitchingSet, Track } from "../types/manifest";
+import type { SwitchingSet, Track } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
@@ -32,12 +32,40 @@ export function flattenPeriods(
     const period = periods[i];
     asserts.assertExists(period, "Period not found");
     const duration = resolvePeriodDuration(mpd, periods, i);
-    for (const adaptationSet of XmlUtils.children(period, "AdaptationSet")) {
+    const adaptationSets = XmlUtils.children(period, "AdaptationSet");
+    for (const adaptationSet of adaptationSets) {
       processAdaptationSet(ctx, period, adaptationSet, duration);
     }
   }
 
   return [...ctx.switchingSets.values()];
+}
+
+function parseAdaptationSet(
+  adaptationSet: txml.TNode,
+  representations: txml.TNode[],
+): SwitchingSet {
+  const type = inferMediaType(adaptationSet, representations);
+  const codec = resolveCodec(adaptationSet, representations);
+  const id = `${type}:${codec}`;
+
+  if (type === MediaType.VIDEO) {
+    return { id, type: MediaType.VIDEO, codec, tracks: [] };
+  }
+  if (type === MediaType.AUDIO) {
+    const language = LanguageUtils.toBCP47(
+      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
+    );
+    return {
+      id: `${id}:${language}`,
+      type: MediaType.AUDIO,
+      codec,
+      language,
+      tracks: [],
+    };
+  }
+
+  throw new Error("Invalid adataptionSet");
 }
 
 function processAdaptationSet(
@@ -51,23 +79,13 @@ function processAdaptationSet(
     return;
   }
 
-  const type = inferMediaType(adaptationSet, representations);
-  const codec = resolveCodec(adaptationSet, representations);
-  const language = LanguageUtils.toBCP47(
-    XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
-  );
-  const switchingSetKey = ManifestUtils.getSwitchingSetKey(
-    type,
-    codec,
-    language,
-  );
-  const switchingSet = getOrCreateSwitchingSet(
-    ctx,
-    switchingSetKey,
-    type,
-    codec,
-    language,
-  );
+  const newSwitchingSet = parseAdaptationSet(adaptationSet, representations);
+  const switchingSetKey = ManifestUtils.getSwitchingSetKey(newSwitchingSet);
+  let switchingSet = ctx.switchingSets.get(switchingSetKey);
+  if (!switchingSet) {
+    switchingSet = newSwitchingSet;
+    ctx.switchingSets.set(switchingSetKey, switchingSet);
+  }
 
   for (const representation of representations) {
     const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
@@ -78,7 +96,7 @@ function processAdaptationSet(
       period,
       adaptationSet,
       representation,
-      type,
+      switchingSet.type,
       duration,
     );
     if (!track) {
@@ -88,38 +106,6 @@ function processAdaptationSet(
     const trackKey = `${switchingSetKey}:${id}`;
     addTrack(ctx, switchingSet, trackKey, track);
   }
-}
-
-function getOrCreateSwitchingSet(
-  ctx: PeriodContext,
-  key: string,
-  type: MediaType,
-  codec: string,
-  language: string,
-): SwitchingSet {
-  const switchingSet = ctx.switchingSets.get(key);
-  if (switchingSet) {
-    return switchingSet;
-  }
-  const commonProps = {
-    codec,
-    tracks: [],
-  };
-  if (type === MediaType.AUDIO) {
-    const newSwitchingSet: AudioSwitchingSet = {
-      type: MediaType.AUDIO,
-      language,
-      ...commonProps,
-    };
-    ctx.switchingSets.set(key, newSwitchingSet);
-    return newSwitchingSet;
-  }
-  const newSwitchingSet: SwitchingSet = {
-    type,
-    ...commonProps,
-  };
-  ctx.switchingSets.set(key, newSwitchingSet);
-  return newSwitchingSet;
 }
 
 function addTrack(
@@ -199,6 +185,9 @@ function parseTrack(
   );
   asserts.assertExists(bandwidth, "bandwidth is mandatory");
 
+  const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
+  asserts.assertExists(id, "Representation@id is mandatory");
+
   const segmentData = parseSegmentData(
     period,
     adaptationSet,
@@ -220,6 +209,7 @@ function parseTrack(
     asserts.assertExists(height, "height is mandatory");
 
     return {
+      id,
       type: MediaType.VIDEO,
       width,
       height,
@@ -230,6 +220,7 @@ function parseTrack(
 
   if (type === MediaType.AUDIO) {
     return {
+      id,
       type: MediaType.AUDIO,
       bandwidth,
       ...segmentData,
