@@ -132,4 +132,29 @@ describe("DashParser", () => {
 </MPD>`;
     expect(() => parseManifest(emptyMpd, sourceUrl)).toThrow();
   });
+
+  it("parses a subtitle AdaptationSet into a subtitle switching set with language", () => {
+    const manifest = parseManifest(loadFixture("subtitle.mpd"), sourceUrl);
+    const subtitle = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.SUBTITLE,
+    );
+    expect(subtitle).toBeDefined();
+    expect(subtitle!.codec).toBe("wvtt");
+    expect(subtitle!.type).toBe(MediaType.SUBTITLE);
+    if (subtitle!.type === MediaType.SUBTITLE) {
+      expect(subtitle!.language).toBe("en");
+    }
+    expect(subtitle!.tracks).toHaveLength(1);
+  });
+
+  it("builds subtitle track segments from the SegmentTemplate", () => {
+    const manifest = parseManifest(loadFixture("subtitle.mpd"), sourceUrl);
+    const subtitle = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.SUBTITLE,
+    )!;
+    const track = subtitle.tracks[0]!;
+    expect(track.segments.length).toBeGreaterThan(0);
+    expect(track.segments[0]!.url).toContain("subtitle-");
+    expect(track.segments[0]!.initSegment.url).toContain("subtitle-init.mp4");
+  });
 });
