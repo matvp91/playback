@@ -8,36 +8,77 @@ import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import { parseSegmentData } from "./dash_segments";
 
-type PeriodContext = {
-  sourceUrl: string;
-  mpd: txml.TNode;
-  switchingSets: Map<string, SwitchingSet>;
-  tracks: Map<string, Track>;
-};
-
 export function flattenPeriods(
   sourceUrl: string,
   mpd: txml.TNode,
   periods: txml.TNode[],
 ): SwitchingSet[] {
-  const ctx: PeriodContext = {
-    sourceUrl,
-    mpd,
-    switchingSets: new Map(),
-    tracks: new Map(),
-  };
+  const switchingSetsById = new Map<string, SwitchingSet>();
+  const tracksById = new Map<string, Track>();
 
   for (let i = 0; i < periods.length; i++) {
     const period = periods[i];
     asserts.assertExists(period, "Period not found");
     const duration = resolvePeriodDuration(mpd, periods, i);
-    const adaptationSets = XmlUtils.children(period, "AdaptationSet");
-    for (const adaptationSet of adaptationSets) {
-      processAdaptationSet(ctx, period, adaptationSet, duration);
+
+    for (const adaptationSet of XmlUtils.children(period, "AdaptationSet")) {
+      const representations = XmlUtils.children(
+        adaptationSet,
+        "Representation",
+      );
+      if (representations.length === 0) {
+        continue;
+      }
+
+      const setId = getAdaptationSetId(adaptationSet, representations);
+      let set = switchingSetsById.get(setId);
+      if (!set) {
+        set = parseAdaptationSet(adaptationSet, representations);
+        switchingSetsById.set(setId, set);
+      }
+
+      for (const representation of representations) {
+        const track = parseRepresentation(
+          sourceUrl,
+          mpd,
+          period,
+          adaptationSet,
+          representation,
+          set.type,
+          duration,
+        );
+        mergeTrack(tracksById, set, track);
+      }
     }
   }
 
-  return [...ctx.switchingSets.values()];
+  return [...switchingSetsById.values()];
+}
+
+function getAdaptationSetId(
+  adaptationSet: txml.TNode,
+  representations: txml.TNode[],
+): string {
+  const type = resolveType(adaptationSet, representations);
+  const codec = resolveCodec(adaptationSet, representations);
+  const id = `${type}:${codec}`;
+
+  if (type === MediaType.VIDEO) {
+    return id;
+  }
+  if (type === MediaType.AUDIO) {
+    const language = LanguageUtils.toBCP47(
+      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
+    );
+    return `${id}:${language}`;
+  }
+  if (type === MediaType.SUBTITLE) {
+    const language = LanguageUtils.toBCP47(
+      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
+    );
+    return `${id}:${language}`;
+  }
+  throw new Error("Unsupported media type");
 }
 
 function parseAdaptationSet(
@@ -49,7 +90,7 @@ function parseAdaptationSet(
   const id = `${type}:${codec}`;
 
   if (type === MediaType.VIDEO) {
-    return { id, type: MediaType.VIDEO, codec, tracks: [] };
+    return { id, type, codec, tracks: [] };
   }
   if (type === MediaType.AUDIO) {
     const language = LanguageUtils.toBCP47(
@@ -57,134 +98,52 @@ function parseAdaptationSet(
     );
     return {
       id: `${id}:${language}`,
-      type: MediaType.AUDIO,
+      type,
       codec,
       language,
       tracks: [],
     };
   }
-
-  throw new Error("Invalid AdaptationSet");
-}
-
-function processAdaptationSet(
-  ctx: PeriodContext,
-  period: txml.TNode,
-  adaptationSet: txml.TNode,
-  duration: number | null,
-): void {
-  const representations = XmlUtils.children(adaptationSet, "Representation");
-  if (representations.length === 0) {
-    return;
-  }
-
-  const newSwitchingSet = parseAdaptationSet(adaptationSet, representations);
-  let switchingSet = ctx.switchingSets.get(newSwitchingSet.id);
-  if (!switchingSet) {
-    switchingSet = newSwitchingSet;
-    ctx.switchingSets.set(newSwitchingSet.id, switchingSet);
-  }
-
-  for (const representation of representations) {
-    const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
-    asserts.assertExists(id, "Representation@id is mandatory");
-
-    const track = parseTrack(
-      ctx,
-      period,
-      adaptationSet,
-      representation,
-      switchingSet.type,
-      duration,
+  if (type === MediaType.SUBTITLE) {
+    const language = LanguageUtils.toBCP47(
+      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
     );
-    if (!track) {
-      // We parsed a track we don't support (yet)
-      continue;
-    }
-    const trackKey = `${newSwitchingSet.id}:${id}`;
-    addTrack(ctx, switchingSet, trackKey, track);
+    return {
+      id: `${id}:${language}`,
+      type,
+      codec,
+      language,
+      tracks: [],
+    };
   }
+  throw new Error("Unsupported media type");
 }
 
-function addTrack(
-  ctx: PeriodContext,
-  switchingSet: SwitchingSet,
-  trackKey: string,
-  track: Track,
-): void {
-  const existingTrack = ctx.tracks.get(trackKey);
-  if (existingTrack) {
-    existingTrack.segments.push(...track.segments);
-  } else {
-    ctx.tracks.set(trackKey, track);
-    if (switchingSet.type === track.type) {
-      // Allow type cast, TS is not able to infer the
-      // type equality but we conditionally check it anyways.
-      (switchingSet.tracks as Track[]).push(track);
-    }
-  }
-}
-
-function resolvePeriodDuration(
+function parseRepresentation(
+  sourceUrl: string,
   mpd: txml.TNode,
-  periods: txml.TNode[],
-  periodIndex: number,
-): number | null {
-  const period = periods[periodIndex];
-  asserts.assertExists(period, "Period not found");
-
-  const duration = XmlUtils.attr(period, "duration", XmlUtils.parseDuration);
-  if (duration != null) {
-    return duration;
-  }
-
-  const start = XmlUtils.attr(period, "start", XmlUtils.parseDuration) ?? 0;
-
-  const nextPeriod = periods[periodIndex + 1];
-  const nextStart = nextPeriod
-    ? XmlUtils.attr(nextPeriod, "start", XmlUtils.parseDuration)
-    : undefined;
-  if (nextStart != null) {
-    return nextStart - start;
-  }
-
-  const mpdDuration = XmlUtils.attr(
-    mpd,
-    "mediaPresentationDuration",
-    XmlUtils.parseDuration,
-  );
-  if (mpdDuration != null) {
-    return mpdDuration - start;
-  }
-
-  return null;
-}
-
-function parseTrack(
-  ctx: PeriodContext,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
   type: MediaType,
   duration: number | null,
-): Track | null {
+): Track {
+  const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
+  asserts.assertExists(id, "Representation@id is mandatory");
+
   const baseUrl = resolveBaseUrl(
-    ctx.sourceUrl,
-    ctx.mpd,
+    sourceUrl,
+    mpd,
     period,
     adaptationSet,
     representation,
   );
-
   const bandwidth = XmlUtils.attr(
     representation,
     "bandwidth",
     XmlUtils.parseNumber,
   );
   asserts.assertExists(bandwidth, "bandwidth is mandatory");
-
-  const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
-  asserts.assertExists(id, "Representation@id is mandatory");
 
   const segmentData = parseSegmentData(
     period,
@@ -200,32 +159,46 @@ function parseTrack(
       XmlUtils.attr(n, "width", XmlUtils.parseNumber),
     );
     asserts.assertExists(width, "width is mandatory");
-
     const height = Functional.findMap([representation, adaptationSet], (n) =>
       XmlUtils.attr(n, "height", XmlUtils.parseNumber),
     );
     asserts.assertExists(height, "height is mandatory");
-
-    return {
-      id,
-      type: MediaType.VIDEO,
-      width,
-      height,
-      bandwidth,
-      ...segmentData,
-    };
+    return { id, type, width, height, bandwidth, ...segmentData };
   }
-
   if (type === MediaType.AUDIO) {
-    return {
-      id,
-      type: MediaType.AUDIO,
-      bandwidth,
-      ...segmentData,
-    };
+    return { id, type, bandwidth, ...segmentData };
   }
+  if (type === MediaType.SUBTITLE) {
+    return { id, type, bandwidth, ...segmentData };
+  }
+  throw new Error("Unsupported media type");
+}
 
-  return null;
+function mergeTrack(
+  tracksById: Map<string, Track>,
+  set: SwitchingSet,
+  track: Track,
+): void {
+  const key = `${set.id}:${track.id}`;
+  const existing = tracksById.get(key);
+  if (existing) {
+    mergeTrackSegments(existing, track);
+    return;
+  }
+  tracksById.set(key, track);
+  asserts.assert(
+    track.type === set.type,
+    "Track type must match SwitchingSet type",
+  );
+  (set.tracks as Track[]).push(track);
+}
+
+function mergeTrackSegments(target: Track, incoming: Track): void {
+  target.segments.push(...incoming.segments);
+  target.maxSegmentDuration = Math.max(
+    target.maxSegmentDuration,
+    incoming.maxSegmentDuration,
+  );
 }
 
 function resolveType(
@@ -292,4 +265,39 @@ function resolveBaseUrl(
     sourceUrl,
     ...baseUrls.filter((u): u is string => u != null),
   ]);
+}
+
+function resolvePeriodDuration(
+  mpd: txml.TNode,
+  periods: txml.TNode[],
+  periodIndex: number,
+): number | null {
+  const period = periods[periodIndex];
+  asserts.assertExists(period, "Period not found");
+
+  const duration = XmlUtils.attr(period, "duration", XmlUtils.parseDuration);
+  if (duration != null) {
+    return duration;
+  }
+
+  const start = XmlUtils.attr(period, "start", XmlUtils.parseDuration) ?? 0;
+
+  const nextPeriod = periods[periodIndex + 1];
+  const nextStart = nextPeriod
+    ? XmlUtils.attr(nextPeriod, "start", XmlUtils.parseDuration)
+    : undefined;
+  if (nextStart != null) {
+    return nextStart - start;
+  }
+
+  const mpdDuration = XmlUtils.attr(
+    mpd,
+    "mediaPresentationDuration",
+    XmlUtils.parseDuration,
+  );
+  if (mpdDuration != null) {
+    return mpdDuration - start;
+  }
+
+  return null;
 }
