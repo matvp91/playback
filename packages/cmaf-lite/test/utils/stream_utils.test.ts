@@ -182,20 +182,6 @@ describe("StreamUtils", () => {
       expect(videoStream.hierarchy.track).toBe(expectedTrack);
     });
 
-    it("deduplicates streams with identical type, codec, and resolution", () => {
-      const track = createVideoTrack();
-      const manifest = createManifest({
-        switchingSets: [createVideoSwitchingSet({ tracks: [track, track] })],
-      });
-      const streams = buildStreams(manifest);
-      expect(streams.get(MediaType.VIDEO)).toHaveLength(1);
-    });
-
-    it("throws when manifest has no switching sets", () => {
-      const manifest = createManifest({ switchingSets: [] });
-      expect(() => buildStreams(manifest)).toThrow("No streams found");
-    });
-
     it("sorts streams by bandwidth ascending for ABR", () => {
       const manifest = createManifest({
         switchingSets: [

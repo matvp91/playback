@@ -5,21 +5,18 @@ import * as asserts from "./asserts";
 import * as CodecUtils from "./codec_utils";
 
 export function buildStreams(manifest: Manifest): Map<MediaType, Stream[]> {
-  const result = new Map<MediaType, Stream[]>();
+  const result = new Map<MediaType, Stream[]>([
+    [MediaType.VIDEO, []],
+    [MediaType.AUDIO, []],
+  ]);
   for (const ss of manifest.switchingSets) {
     for (const track of ss.tracks) {
       const stream = projectStream(ss, track);
       const list = result.get(stream.type);
-      if (!list) {
-        result.set(stream.type, [stream]);
-        continue;
-      }
-      if (!list.some((s) => isSameStream(s, stream))) {
-        list.push(stream);
-      }
+      asserts.assertExists(list, `No list for ${stream.type}`);
+      list.push(stream);
     }
   }
-  asserts.assert(result.size > 0, "No streams found");
   // Sorted by bandwidth ascending — index 0 is lowest quality.
   // Required for ABR rules to reason about the quality ladder.
   for (const streams of result.values()) {
@@ -87,6 +84,7 @@ function projectStream(ss: SwitchingSet, track: Track): Stream {
       type: track.type,
       codec,
       bandwidth: track.bandwidth,
+      language: ss.language,
       hierarchy: {
         switchingSet: ss,
         track,
@@ -117,14 +115,4 @@ export function pickClosestByBandwidth(
     }
   }
   return best;
-}
-
-function isSameStream(a: Stream, b: Stream): boolean {
-  if (a.type !== b.type || a.codec !== b.codec) {
-    return false;
-  }
-  if (a.type === MediaType.VIDEO && b.type === MediaType.VIDEO) {
-    return a.width === b.width && a.height === b.height;
-  }
-  return true;
 }

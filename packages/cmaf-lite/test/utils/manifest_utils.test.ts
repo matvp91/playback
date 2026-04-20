@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MediaType } from "../../lib/types/media";
-import {
-  getSwitchingSetKey,
-  isInitSegment,
-  isMediaSegment,
-} from "../../lib/utils/manifest_utils";
+import { isInitSegment, isMediaSegment } from "../../lib/utils/manifest_utils";
 import { createInitSegment, createSegment } from "../__framework__/factories";
 
 describe("ManifestUtils", () => {
@@ -25,12 +20,6 @@ describe("ManifestUtils", () => {
 
     it("returns false for a media segment", () => {
       expect(isInitSegment(createSegment())).toBe(false);
-    });
-  });
-
-  describe("getSwitchingSetKey", () => {
-    it("returns a colon-joined string of media type and codec", () => {
-      expect(getSwitchingSetKey(MediaType.VIDEO, "avc")).toBe("video:avc");
     });
   });
 });

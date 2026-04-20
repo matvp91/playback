@@ -132,4 +132,64 @@ describe("DashParser", () => {
 </MPD>`;
     expect(() => parseManifest(emptyMpd, sourceUrl)).toThrow();
   });
+
+  it("parses a subtitle AdaptationSet into a subtitle switching set with language", () => {
+    const manifest = parseManifest(loadFixture("subtitle.mpd"), sourceUrl);
+    const subtitle = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.SUBTITLE,
+    );
+    expect(subtitle).toBeDefined();
+    expect(subtitle!.codec).toBe("wvtt");
+    expect(subtitle!.type).toBe(MediaType.SUBTITLE);
+    if (subtitle!.type === MediaType.SUBTITLE) {
+      expect(subtitle!.language).toBe("en");
+    }
+    expect(subtitle!.tracks).toHaveLength(1);
+  });
+
+  it("builds subtitle track segments from the SegmentTemplate", () => {
+    const manifest = parseManifest(loadFixture("subtitle.mpd"), sourceUrl);
+    const subtitle = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.SUBTITLE,
+    )!;
+    const track = subtitle.tracks[0]!;
+    expect(track.segments.length).toBeGreaterThan(0);
+    expect(track.segments[0]!.url).toContain("subtitle-");
+    expect(track.segments[0]!.initSegment.url).toContain("subtitle-init.mp4");
+  });
+
+  it("concatenates audio segments across periods into a single track", () => {
+    const manifest = parseManifest(loadFixture("multi-period.mpd"), sourceUrl);
+    const audio = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.AUDIO,
+    )!;
+    expect(audio.tracks).toHaveLength(1);
+    const segments = audio.tracks[0]!.segments;
+    const p1Segments = segments.filter((s) => s.url.includes("p1-audio-"));
+    const p2Segments = segments.filter((s) => s.url.includes("p2-audio-"));
+    expect(p1Segments.length).toBeGreaterThan(0);
+    expect(p2Segments.length).toBeGreaterThan(0);
+    expect(p2Segments[0]!.start).toBeGreaterThanOrEqual(30);
+  });
+
+  it("assigns SwitchingSet.id as type:codec for video and type:codec:language for audio", () => {
+    const manifest = parseManifest(loadFixture("basic.mpd"), sourceUrl);
+    const video = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.VIDEO,
+    )!;
+    const audio = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.AUDIO,
+    )!;
+    expect(video.id).toBe("video:avc1.64001f");
+    expect(audio.id).toBe("audio:mp4a.40.2:unk");
+  });
+
+  it("assigns Track.id from Representation@id", () => {
+    const manifest = parseManifest(loadFixture("basic.mpd"), sourceUrl);
+    const video = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.VIDEO,
+    )!;
+    const ids = video.tracks.map((t) => t.id).sort();
+    expect(ids).toEqual(["1", "2"]);
+  });
 });

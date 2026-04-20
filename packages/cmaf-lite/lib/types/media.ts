@@ -64,6 +64,8 @@ export interface VideoStream extends BaseStream {
  */
 export interface AudioStream extends BaseStream {
   type: MediaType.AUDIO;
+  /** Language */
+  language: string;
   hierarchy: StreamHierarchy<MediaType.AUDIO>;
 }
 
