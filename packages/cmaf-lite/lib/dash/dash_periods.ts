@@ -4,7 +4,6 @@ import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
 import * as LanguageUtils from "../utils/language_utils";
-import * as ManifestUtils from "../utils/manifest_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import { parseSegmentData } from "./dash_segments";
@@ -65,7 +64,7 @@ function parseAdaptationSet(
     };
   }
 
-  throw new Error("Invalid adataptionSet");
+  throw new Error("Invalid AdaptationSet");
 }
 
 function processAdaptationSet(
@@ -80,11 +79,10 @@ function processAdaptationSet(
   }
 
   const newSwitchingSet = parseAdaptationSet(adaptationSet, representations);
-  const switchingSetKey = ManifestUtils.getSwitchingSetKey(newSwitchingSet);
-  let switchingSet = ctx.switchingSets.get(switchingSetKey);
+  let switchingSet = ctx.switchingSets.get(newSwitchingSet.id);
   if (!switchingSet) {
     switchingSet = newSwitchingSet;
-    ctx.switchingSets.set(switchingSetKey, switchingSet);
+    ctx.switchingSets.set(newSwitchingSet.id, switchingSet);
   }
 
   for (const representation of representations) {
@@ -103,7 +101,7 @@ function processAdaptationSet(
       // We parsed a track we don't support (yet)
       continue;
     }
-    const trackKey = `${switchingSetKey}:${id}`;
+    const trackKey = `${newSwitchingSet.id}:${id}`;
     addTrack(ctx, switchingSet, trackKey, track);
   }
 }
