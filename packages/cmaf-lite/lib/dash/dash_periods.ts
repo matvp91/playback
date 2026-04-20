@@ -44,7 +44,7 @@ function parseAdaptationSet(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
-  const type = inferMediaType(adaptationSet, representations);
+  const type = resolveType(adaptationSet, representations);
   const codec = resolveCodec(adaptationSet, representations);
   const id = `${type}:${codec}`;
 
@@ -228,7 +228,7 @@ function parseTrack(
   return null;
 }
 
-function inferMediaType(
+function resolveType(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): MediaType {
