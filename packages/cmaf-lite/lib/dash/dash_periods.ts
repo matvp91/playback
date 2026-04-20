@@ -30,24 +30,24 @@ export function flattenPeriods(
         continue;
       }
 
-      const setId = getAdaptationSetId(adaptationSet, representations);
-      let set = switchingSetsById.get(setId);
-      if (!set) {
-        set = parseAdaptationSet(adaptationSet, representations);
-        switchingSetsById.set(setId, set);
+      const id = getAdaptationSetId(adaptationSet, representations);
+      let switchingSet = switchingSetsById.get(id);
+      if (!switchingSet) {
+        switchingSet = parseAdaptationSet(adaptationSet, representations);
+        switchingSetsById.set(id, switchingSet);
       }
 
       for (const representation of representations) {
         const track = parseRepresentation(
+          switchingSet.type,
           sourceUrl,
           mpd,
           period,
           adaptationSet,
           representation,
-          set.type,
           duration,
         );
-        mergeTrack(tracksById, set, track);
+        mergeTrack(tracksById, switchingSet, track);
       }
     }
   }
@@ -90,7 +90,12 @@ function parseAdaptationSet(
   const id = `${type}:${codec}`;
 
   if (type === MediaType.VIDEO) {
-    return { id, type, codec, tracks: [] };
+    return {
+      id,
+      type,
+      codec,
+      tracks: [],
+    };
   }
   if (type === MediaType.AUDIO) {
     const language = LanguageUtils.toBCP47(
@@ -120,12 +125,12 @@ function parseAdaptationSet(
 }
 
 function parseRepresentation(
+  type: MediaType,
   sourceUrl: string,
   mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
-  type: MediaType,
   duration: number | null,
 ): Track {
   const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
@@ -163,13 +168,30 @@ function parseRepresentation(
       XmlUtils.attr(n, "height", XmlUtils.parseNumber),
     );
     asserts.assertExists(height, "height is mandatory");
-    return { id, type, width, height, bandwidth, ...segmentData };
+    return {
+      id,
+      type,
+      width,
+      height,
+      bandwidth,
+      ...segmentData,
+    };
   }
   if (type === MediaType.AUDIO) {
-    return { id, type, bandwidth, ...segmentData };
+    return {
+      id,
+      type,
+      bandwidth,
+      ...segmentData,
+    };
   }
   if (type === MediaType.SUBTITLE) {
-    return { id, type, bandwidth, ...segmentData };
+    return {
+      id,
+      type,
+      bandwidth,
+      ...segmentData,
+    };
   }
   throw new Error("Unsupported media type");
 }
