@@ -24,7 +24,8 @@ export function StreamItem({ stream, active, onClick }: StreamItemProps) {
       ) : null}
       {stream.type === MediaType.AUDIO ? (
         <span>
-          {formatBandwidth(stream.bandwidth)} · {stream.codec} · {stream.language}
+          {formatBandwidth(stream.bandwidth)} · {stream.codec} ·{" "}
+          {stream.language}
         </span>
       ) : null}
     </button>
