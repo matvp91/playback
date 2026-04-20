@@ -168,13 +168,13 @@ function parseTrack(
   type: MediaType,
   duration: number | null,
 ): Track | null {
-  const baseUrls = [ctx.mpd, period, adaptationSet, representation].flatMap(
-    (node) => XmlUtils.children(node, "BaseURL").map(XmlUtils.text),
-  );
-  const baseUrl = UrlUtils.resolveUrls([
+  const baseUrl = resolveBaseUrl(
     ctx.sourceUrl,
-    ...baseUrls.filter((u): u is string => u != null),
-  ]);
+    ctx.mpd,
+    period,
+    adaptationSet,
+    representation,
+  );
 
   const bandwidth = XmlUtils.attr(
     representation,
@@ -276,4 +276,20 @@ function resolveCodec(
   asserts.assertExists(codec, "codecs is mandatory");
 
   return codec;
+}
+
+function resolveBaseUrl(
+  sourceUrl: string,
+  mpd: txml.TNode,
+  period: txml.TNode,
+  adaptationSet: txml.TNode,
+  representation: txml.TNode,
+): string {
+  const baseUrls = [mpd, period, adaptationSet, representation].flatMap(
+    (node) => XmlUtils.children(node, "BaseURL").map(XmlUtils.text),
+  );
+  return UrlUtils.resolveUrls([
+    sourceUrl,
+    ...baseUrls.filter((u): u is string => u != null),
+  ]);
 }
