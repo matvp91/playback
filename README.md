@@ -2,7 +2,7 @@
 
 What would a media player look like if we started from scratch in 2026?
 
-I help maintain [Shaka Player](https://github.com/shaka-project/shaka-player) with a bunch of really smart people. Shaka is built to be the player that works for everyone, and that's its strength. But I've spent years wondering what happens when you scope things down aggressively. Same learnings, way smaller scope. CMAF only. MSE/EME only. No legacy formats, no legacy key systems. That's it.
+I help maintain [Shaka Player](https://github.com/shaka-project/shaka-player) with a couple of cool people. Shaka is built to be the player that works for everyone, and that's its strength. But I've spent years wondering what happens when you scope things down aggressively. Same learnings, way smaller scope. CMAF only. MSE/EME only. No legacy formats, no legacy key systems. That's it.
 
 ## Documentation
 
