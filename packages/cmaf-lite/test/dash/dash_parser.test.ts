@@ -268,7 +268,7 @@ describe("DashParser", () => {
 
   describe("update", () => {
     it("preserves manifest, switching set, track, and segment references when applied twice to the same MPD", () => {
-      const text = loadFixture("dash-parser/vod-basic.mpd");
+      const text = loadFixture("dash-parser/live-timeline-sliding-1.mpd");
       const manifest = DashParser.create(text, sourceUrl);
 
       const switchingSetsRef = manifest.switchingSets;
@@ -287,7 +287,7 @@ describe("DashParser", () => {
       expect(firstSet.tracks[0]).toBe(firstTrack);
       expect(firstTrack.segments).toBe(segmentsRef);
       expect(firstTrack.segments[0]).toBe(firstSegment);
-      expect(firstTrack.segments.length).toBeGreaterThanOrEqual(segmentCount);
+      expect(firstTrack.segments.length).toBe(segmentCount);
     });
 
     it("extends an existing track's segments when a second MPD adds tail segments", () => {
