@@ -88,6 +88,17 @@ export interface PlayerConfig {
    * position to a segment's time range.
    */
   maxSegmentLookupTolerance: number;
+  /**
+   * Seconds behind the live edge to start playback for live presentations.
+   * Ignored for on-demand manifests.
+   */
+  liveDelay: number;
+  /**
+   * Seconds between manifest refreshes for live presentations. Actual
+   * cadence is `liveUpdateTime + fetchDuration` because refreshes are
+   * scheduled after each response lands.
+   */
+  liveUpdateTime: number;
   /** Network options for manifest requests. */
   manifestRequestOptions: NetworkRequestOptions;
   /** Network options for segment requests. */
@@ -109,6 +120,8 @@ export const DEFAULT_CONFIG: PlayerConfig = {
   backBufferQuotaPadding: 2,
   maxBufferHole: 0.1,
   maxSegmentLookupTolerance: 0.25,
+  liveDelay: 20,
+  liveUpdateTime: 2,
   manifestRequestOptions: {
     maxAttempts: 3,
     delay: 1000,
