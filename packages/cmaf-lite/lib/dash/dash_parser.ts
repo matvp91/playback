@@ -30,7 +30,7 @@ type ReadContext = {
 };
 
 export function create(text: string, sourceUrl: string): Manifest {
-  const manifest: Manifest = { duration: 0, switchingSets: [] };
+  const manifest: Manifest = { duration: 0, isLive: false, switchingSets: [] };
   const mpd = XmlUtils.parseXml(text, "MPD");
   readMpd(manifest, mpd, sourceUrl);
   return manifest;
@@ -56,6 +56,8 @@ function readMpd(manifest: Manifest, mpd: txml.TNode, sourceUrl: string): void {
     readPeriod(ctx, mpd, periods, i);
   }
 
+  const type = XmlUtils.attr(mpd, "type", XmlUtils.parseString);
+  manifest.isLive = type === "dynamic";
   manifest.duration = resolveDuration(mpd, manifest.switchingSets);
 }
 

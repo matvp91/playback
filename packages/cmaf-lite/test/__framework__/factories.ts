@@ -83,6 +83,7 @@ export function createAudioSwitchingSet(
 export function createManifest(overrides?: Partial<Manifest>): Manifest {
   return {
     duration: 60,
+    isLive: false,
     switchingSets: [createVideoSwitchingSet(), createAudioSwitchingSet()],
     ...overrides,
   };
