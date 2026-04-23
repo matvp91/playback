@@ -352,6 +352,19 @@ describe("DashParser", () => {
       expect(segments[0]!.start).toBeCloseTo(-8, 5);
     });
 
+    it("resolves <BaseURL> at every level (MPD / Period / AdaptationSet / Representation)", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-base-url.mpd"),
+        sourceUrl,
+      );
+      const url = findVideo(manifest).tracks[0]!.segments[0]!.url;
+      expect(url).toContain("mpd/");
+      expect(url).toContain("period/");
+      expect(url).toContain("as/");
+      expect(url).toContain("rep/");
+      expect(url).toContain("v-1.m4s");
+    });
+
     it("generates the correct number of segments from SegmentTimeline with repeat count", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-timeline.mpd"),

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="PT12S">
+  <BaseURL>mpd/</BaseURL>
+  <Period>
+    <BaseURL>period/</BaseURL>
+    <AdaptationSet contentType="video" mimeType="video/mp4" codecs="avc1.64001f">
+      <BaseURL>as/</BaseURL>
+      <SegmentTemplate timescale="1000" media="v-$Number$.m4s" initialization="v-init.mp4" startNumber="1" duration="4000" />
+      <Representation id="1" bandwidth="2000000" width="1920" height="1080">
+        <BaseURL>rep/</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
