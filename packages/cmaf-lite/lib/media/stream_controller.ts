@@ -1,7 +1,7 @@
 import type {
   AdaptationEvent,
   BufferFlushedEvent,
-  ManifestCreatedEvent,
+  ManifestUpdatedEvent,
   MediaAttachedEvent,
 } from "../events";
 import { Events } from "../events";
@@ -40,7 +40,7 @@ export class StreamController {
   private mediaStates_ = new Map<MediaType, MediaState>();
 
   constructor(private player_: Player) {
-    this.player_.on(Events.MANIFEST_CREATED, this.onManifestCreated_);
+    this.player_.on(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -69,7 +69,7 @@ export class StreamController {
       }
       mediaState.timer.stop();
     }
-    this.player_.off(Events.MANIFEST_CREATED, this.onManifestCreated_);
+    this.player_.off(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -77,12 +77,14 @@ export class StreamController {
     this.mediaStates_.clear();
   }
 
-  private onManifestCreated_ = (event: ManifestCreatedEvent) => {
+  private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
     this.isLive_ = event.manifest.isLive;
-    this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
-    log.info("Streams", this.streamsMap_);
-    this.player_.emit(Events.STREAMS_UPDATED);
-    this.tryStart_();
+    if (!event.isUpdate) {
+      this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
+      log.info("Streams", this.streamsMap_);
+      this.player_.emit(Events.STREAMS_CREATED);
+      this.tryStart_();
+    }
   };
 
   private onMediaAttached_ = (event: MediaAttachedEvent) => {
@@ -159,10 +161,11 @@ export class StreamController {
     this.media_ = null;
   };
 
-  private getInitialTime_(stream: Stream): number {
+  private getInitialTime_(): number {
     if (!this.isLive_) {
       return 0;
     }
+    const stream = this.getReferenceStream();
     const { segments } = stream.hierarchy.track;
     const liveEdge = segments.at(-1)?.end ?? 0;
     const firstSegmentStart = segments[0]?.start ?? 0;
@@ -234,11 +237,8 @@ export class StreamController {
       });
     }
 
-    if (this.isLive_ && this.media_) {
-      const videoStream = this.streams_.get(MediaType.VIDEO);
-      if (videoStream) {
-        this.media_.currentTime = this.getInitialTime_(videoStream);
-      }
+    if (this.media_) {
+      this.media_.currentTime = this.getInitialTime_();
     }
 
     for (const mediaState of this.mediaStates_.values()) {
@@ -404,6 +404,13 @@ export class StreamController {
       this.update_(mediaState);
     }
   };
+
+  private getReferenceStream() {
+    const stream =
+      this.streams_.get(MediaType.VIDEO) ?? this.streams_.get(MediaType.AUDIO);
+    asserts.assertExists(stream, "No reference stream found");
+    return stream;
+  }
 }
 
 function isAV(type: MediaType) {

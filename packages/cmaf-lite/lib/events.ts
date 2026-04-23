@@ -18,7 +18,6 @@ import type {
  */
 export const Events = {
   MANIFEST_LOADING: "manifestLoading",
-  MANIFEST_CREATED: "manifestCreated",
   MANIFEST_UPDATED: "manifestUpdated",
   MEDIA_ATTACHING: "mediaAttaching",
   MEDIA_ATTACHED: "mediaAttached",
@@ -31,7 +30,7 @@ export const Events = {
   BUFFER_FLUSH: "bufferFlush",
   BUFFER_FLUSHED: "bufferFlushed",
   BUFFER_APPEND_ERROR: "bufferAppendError",
-  STREAMS_UPDATED: "streamsUpdated",
+  STREAMS_CREATED: "streamsCreated",
   STREAM_CHANGED: "streamChanged",
   ADAPTATION: "adaptation",
   NETWORK_REQUEST: "networkRequest",
@@ -48,15 +47,6 @@ export interface ManifestLoadingEvent {
 }
 
 /**
- * Fired when a manifest has been fetched and parsed for the first time.
- *
- * @public
- */
-export interface ManifestCreatedEvent {
-  manifest: Manifest;
-}
-
-/**
  * Fired when a live manifest has been refreshed and reconciled in place.
  * Carries the same mutated manifest reference that consumers already hold.
  *
@@ -64,6 +54,7 @@ export interface ManifestCreatedEvent {
  */
 export interface ManifestUpdatedEvent {
   manifest: Manifest;
+  isUpdate: boolean;
 }
 
 /**
@@ -207,7 +198,6 @@ export interface NetworkResponseEvent {
  */
 export interface EventMap {
   [Events.MANIFEST_LOADING]: (event: ManifestLoadingEvent) => void;
-  [Events.MANIFEST_CREATED]: (event: ManifestCreatedEvent) => void;
   [Events.MANIFEST_UPDATED]: (event: ManifestUpdatedEvent) => void;
   [Events.MEDIA_ATTACHING]: (event: MediaAttachingEvent) => void;
   [Events.MEDIA_ATTACHED]: (event: MediaAttachedEvent) => void;
@@ -220,7 +210,7 @@ export interface EventMap {
   [Events.BUFFER_FLUSH]: (event: BufferFlushEvent) => void;
   [Events.BUFFER_APPEND_ERROR]: (event: BufferAppendErrorEvent) => void;
   [Events.BUFFER_FLUSHED]: (event: BufferFlushedEvent) => void;
-  [Events.STREAMS_UPDATED]: undefined;
+  [Events.STREAMS_CREATED]: undefined;
   [Events.STREAM_CHANGED]: (event: StreamChangedEvent) => void;
   [Events.ADAPTATION]: (event: AdaptationEvent) => void;
   [Events.NETWORK_REQUEST]: (event: NetworkRequestEvent) => void;

@@ -58,19 +58,18 @@ export class ManifestController {
         return;
       }
 
+      let isUpdate = false;
       if (!this.manifest_) {
         this.manifest_ = DashParser.create(response.text, response.request.url);
-        log.info("Manifest created", this.manifest_);
-        this.player_.emit(Events.MANIFEST_CREATED, {
-          manifest: this.manifest_,
-        });
       } else {
+        isUpdate = true;
         DashParser.update(this.manifest_, response.text, response.request.url);
-        log.info("Manifest updated", this.manifest_);
-        this.player_.emit(Events.MANIFEST_UPDATED, {
-          manifest: this.manifest_,
-        });
       }
+      log.info(`Manifest ${isUpdate ? "updated" : "created"}`, this.manifest_);
+      this.player_.emit(Events.MANIFEST_UPDATED, {
+        manifest: this.manifest_,
+        isUpdate,
+      });
     } catch (error) {
       if (this.destroyed_) {
         return;
