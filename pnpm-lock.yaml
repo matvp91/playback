@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.4.12
         version: 2.4.12
+      typescript:
+        specifier: '6'
+        version: 6.0.3
 
   packages/cmaf-lite:
     dependencies:
@@ -138,7 +141,7 @@ importers:
         version: 0.38.3(astro@6.1.5)
       astro:
         specifier: ^6.1.5
-        version: 6.1.5
+        version: 6.1.5(typescript@6.0.3)
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -211,7 +214,7 @@ packages:
       '@astrojs/markdown-remark': 7.1.0
       '@mdx-js/mdx': 3.1.1
       acorn: 8.16.0
-      astro: 6.1.5
+      astro: 6.1.5(typescript@6.0.3)
       es-module-lexer: 2.0.0
       estree-util-visit: 2.0.0
       hast-util-to-html: 9.0.5
@@ -253,7 +256,7 @@ packages:
       '@types/hast': 3.0.4
       '@types/js-yaml': 4.0.9
       '@types/mdast': 4.0.4
-      astro: 6.1.5
+      astro: 6.1.5(typescript@6.0.3)
       astro-expressive-code: 0.41.7(astro@6.1.5)
       bcp-47: 2.1.0
       hast-util-from-html: 2.0.3
@@ -3135,11 +3138,11 @@ packages:
     peerDependencies:
       astro: ^4.0.0-beta || ^5.0.0-beta || ^3.3.0 || ^6.0.0-beta
     dependencies:
-      astro: 6.1.5
+      astro: 6.1.5(typescript@6.0.3)
       rehype-expressive-code: 0.41.7
     dev: false
 
-  /astro@6.1.5:
+  /astro@6.1.5(typescript@6.0.3):
     resolution: {integrity: sha512-AJVw/JlssxUCBFi3Hp4djL8Pt7wUQqStBBawCd8cNGBBM2lBzp/rXGguzt4OcMfW+86fs0hpFwMyopHM2r6d3g==}
     engines: {node: '>=22.12.0', npm: '>=9.6.5', pnpm: '>=7.1.0'}
     hasBin: true
@@ -3187,7 +3190,7 @@ packages:
       tinyclip: 0.1.12
       tinyexec: 1.1.1
       tinyglobby: 0.2.15
-      tsconfck: 3.1.6
+      tsconfck: 3.1.6(typescript@6.0.3)
       ultrahtml: 1.6.0
       unifont: 0.7.4
       unist-util-visit: 5.1.0
@@ -7860,7 +7863,7 @@ packages:
       code-block-writer: 13.0.3
     dev: false
 
-  /tsconfck@3.1.6:
+  /tsconfck@3.1.6(typescript@6.0.3):
     resolution: {integrity: sha512-ks6Vjr/jEw0P1gmOVwutM3B7fWxoWBL2KRDb1JfqGVawBmO5UsvmWOQFGHBPl5yxYz4eERr19E6L7NMv+Fej4w==}
     engines: {node: ^18 || >=20}
     hasBin: true
@@ -7869,6 +7872,8 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+    dependencies:
+      typescript: 6.0.3
     dev: false
 
   /tsconfig-paths@4.2.0:
