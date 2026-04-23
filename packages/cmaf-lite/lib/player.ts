@@ -2,6 +2,7 @@ import { EventEmitter } from "@matvp91/eventemitter3";
 import { AbrController } from "./abr/abr_controller";
 import type { ConfigPath, ConfigPathValue, PlayerConfig } from "./config";
 import { DEFAULT_CONFIG } from "./config";
+import { EMPTY_ARRAY, EMPTY_TIME_RANGES } from "./constants";
 import type { EventMap } from "./events";
 import { Events } from "./events";
 import { ManifestController } from "./manifest/manifest_controller";
@@ -12,7 +13,6 @@ import { NetworkService } from "./net/network_service";
 import type { DeepPartial } from "./types/helpers";
 import type { Stream } from "./types/media";
 import { MediaType } from "./types/media";
-import { EMPTY_ARRAY, EMPTY_TIME_RANGES } from "./utils/constants";
 import * as ObjectUtils from "./utils/object_utils";
 
 /**

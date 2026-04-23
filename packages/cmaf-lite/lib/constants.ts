@@ -1,6 +1,6 @@
-export const EMPTY_ARRAY = [];
+export const EMPTY_ARRAY = Object.freeze([]);
 
-export const EMPTY_TIME_RANGES: TimeRanges = {
+export const EMPTY_TIME_RANGES: TimeRanges = Object.freeze({
   length: 0,
   start: (_index: number) => {
     throw new DOMException("IndexSizeError");
@@ -8,4 +8,4 @@ export const EMPTY_TIME_RANGES: TimeRanges = {
   end: (_index: number) => {
     throw new DOMException("IndexSizeError");
   },
-};
+});
