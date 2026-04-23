@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as DashParser from "../../lib/dash/dash_parser";
 import { MediaType } from "../../lib/types/media";
-import * as asserts from "../../lib/utils/asserts";
 import { loadFixture } from "../fixtures";
 import { findAudio, findSubtitle, findVideo } from "./helpers";
 
@@ -250,6 +249,8 @@ describe("DashParser", () => {
         sourceUrl,
       );
       const segments = findVideo(manifest).tracks[0]!.segments;
+      // Each period declares <S t="0"> — period-relative. The parser adds
+      // Period@start (0 and 12) to produce absolute starts.
       // Period 1: [0, 4, 8] (3 segments); Period 2: [12, 16, 20] (3 segments)
       expect(segments.map((s) => s.start)).toEqual([0, 4, 8, 12, 16, 20]);
     });
@@ -384,7 +385,9 @@ describe("DashParser", () => {
       );
       const segments = findVideo(manifest).tracks[0]!.segments;
       // pto=8000, timescale=1000; duration-based addressing uses time=i*duration,
-      // so start = (0 - 8000)/1000 = -8 for the first segment.
+      // so start = (0 - 8000)/1000 = -8 for the first segment. The negative
+      // value is intentional — it proves pto is applied; a realistic fixture
+      // would pair pto with a matching <S t="..."> to yield a non-negative start.
       expect(segments[0]!.start).toBeCloseTo(-8, 5);
     });
 
@@ -570,8 +573,7 @@ describe("DashParser", () => {
         loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
-      const track = manifest.switchingSets[0]?.tracks[0];
-      asserts.assertExists(track, "track not found");
+      const track = findVideo(manifest).tracks[0]!;
       expect(track.segments.map((s) => s.start)).toEqual([0, 4, 8, 12, 16]);
 
       DashParser.update(
@@ -589,12 +591,8 @@ describe("DashParser", () => {
         loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
-      const track = manifest.switchingSets[0]?.tracks[0];
-      asserts.assertExists(track, "track not found");
-      const kept = [track.segments[2], track.segments[3], track.segments[4]];
-      asserts.assertExists(kept[0], "kept[0]");
-      asserts.assertExists(kept[1], "kept[1]");
-      asserts.assertExists(kept[2], "kept[2]");
+      const track = findVideo(manifest).tracks[0]!;
+      const kept = [track.segments[2]!, track.segments[3]!, track.segments[4]!];
 
       DashParser.update(
         manifest,
@@ -613,10 +611,8 @@ describe("DashParser", () => {
         loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
-      const switchingSet = manifest.switchingSets[0];
-      asserts.assertExists(switchingSet, "switchingSet not found");
-      const track = switchingSet.tracks[0];
-      asserts.assertExists(track, "track not found");
+      const switchingSet = manifest.switchingSets[0]!;
+      const track = switchingSet.tracks[0]!;
       const segmentsArray = track.segments;
 
       DashParser.update(
@@ -627,18 +623,17 @@ describe("DashParser", () => {
 
       expect(manifest.switchingSets[0]).toBe(switchingSet);
       expect(switchingSet.tracks[0]).toBe(track);
-      expect(switchingSet.tracks[0]?.segments).toBe(segmentsArray);
+      expect(switchingSet.tracks[0]!.segments).toBe(segmentsArray);
     });
 
     it("uses the refreshed MPD's first-segment start as the prune watermark", () => {
-      // Edge case flagged in Task 7 review: first <S> in the updated MPD
-      // has t != 0 (timeline-2 starts at t=8000 ms → start=8s).
+      // First <S> in the updated MPD has t != 0 (timeline-2 starts at
+      // t=8000 ms → start=8s), so the prune watermark shifts accordingly.
       const manifest = DashParser.create(
         loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
-      const track = manifest.switchingSets[0]?.tracks[0];
-      asserts.assertExists(track, "track not found");
+      const track = findVideo(manifest).tracks[0]!;
 
       DashParser.update(
         manifest,
@@ -647,7 +642,7 @@ describe("DashParser", () => {
       );
 
       // Head trimmed to the MPD's new earliest start (8), not 0.
-      expect(track.segments[0]?.start).toBe(8);
+      expect(track.segments[0]!.start).toBe(8);
     });
   });
 });
