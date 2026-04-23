@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManifest } from "../../lib/dash/dash_parser";
+import * as DashParser from "../../lib/dash/dash_parser";
 import { MediaType } from "../../lib/types/media";
 import { loadFixture } from "../fixtures";
 
@@ -8,7 +8,7 @@ const sourceUrl = "https://cdn.test/manifest.mpd";
 describe("DashSegments", () => {
   describe("duration-based segments", () => {
     it("generates segments that cover the full presentation duration", () => {
-      const manifest = parseManifest(loadFixture("basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
       const video = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!;
@@ -17,7 +17,7 @@ describe("DashSegments", () => {
     });
 
     it("produces contiguous segments with no gaps between them", () => {
-      const manifest = parseManifest(loadFixture("basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
       const segments = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!.tracks[0]!.segments;
@@ -28,7 +28,7 @@ describe("DashSegments", () => {
     });
 
     it("attaches an init segment to every media segment", () => {
-      const manifest = parseManifest(loadFixture("basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
       const segments = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!.tracks[0]!.segments;
@@ -42,7 +42,7 @@ describe("DashSegments", () => {
 
   describe("SegmentTemplate inheritance", () => {
     it("merges SegmentTemplate attributes from period, adaptation set, and representation levels", () => {
-      const manifest = parseManifest(
+      const manifest = DashParser.create(
         loadFixture("inherited-template.mpd"),
         sourceUrl,
       );
@@ -59,7 +59,10 @@ describe("DashSegments", () => {
 
   describe("timeline-based segments", () => {
     it("generates the correct number of segments from SegmentTimeline with repeat count", () => {
-      const manifest = parseManifest(loadFixture("timeline.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("timeline.mpd"),
+        sourceUrl,
+      );
       const segments = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!.tracks[0]!.segments;
@@ -69,7 +72,10 @@ describe("DashSegments", () => {
     });
 
     it("calculates correct start and end times from timeline entries", () => {
-      const manifest = parseManifest(loadFixture("timeline.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("timeline.mpd"),
+        sourceUrl,
+      );
       const segments = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!.tracks[0]!.segments;
@@ -83,7 +89,7 @@ describe("DashSegments", () => {
 
   describe("timeline with time reset", () => {
     it("resets segment time when S entry has explicit @_t attribute", () => {
-      const manifest = parseManifest(
+      const manifest = DashParser.create(
         loadFixture("timeline-reset.mpd"),
         sourceUrl,
       );

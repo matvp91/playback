@@ -31,8 +31,10 @@
     "@microsoft/api-extractor": "^7.58.2",
     "@relative-ci/rollup-plugin": "^5.3.1",
     "@types/node": "^25.5.2",
-    "happy-dom": "^20.8.9",
+    "happy-dom": "^20.9.0",
+    "map.prototype.getorinsertcomputed": "^1.0.1",
     "tsdown": "^0.21.7",
+    "typescript": "6",
     "vitest": "^4.1.4"
   },
   "dependencies": {

@@ -15,13 +15,43 @@ export function parseXml(text: string, tagName: string): txml.TNode {
   return root;
 }
 
+export type AttrParser<T> = (raw: string) => T;
+
 export function attr<T>(
   node: txml.TNode,
   name: string,
-  parser: (raw: string) => T,
+  parser: AttrParser<T>,
+): T | undefined;
+export function attr<T>(
+  node: txml.TNode,
+  name: string,
+  parser: AttrParser<T>,
+  defaultValue: T,
+): T;
+export function attr<T>(
+  node: txml.TNode,
+  name: string,
+  parser: AttrParser<T>,
+  defaultValue?: T,
 ): T | undefined {
   const raw = node.attributes[name];
-  return raw == null ? undefined : parser(raw);
+  if (raw != null) {
+    return parser(raw);
+  }
+  return defaultValue;
+}
+
+export function attrRequired<T>(
+  node: txml.TNode,
+  name: string,
+  parser: AttrParser<T>,
+): T {
+  const raw = node.attributes[name];
+  asserts.assertExists(
+    raw,
+    `Required attribute "${name}" missing on <${node.tagName}>`,
+  );
+  return parser(raw);
 }
 
 /**

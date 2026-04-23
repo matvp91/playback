@@ -13,7 +13,8 @@
     "source.fixAll.biome": "explicit",
     "source.organizeImports.biome": "explicit"
   },
-   "tailwindCSS.experimental.classRegex": [
+  "tailwindCSS.experimental.classRegex": [
     ["classNames\\s*=\\s*\\{([^}]*)\\}", "[\"'`]([^\"'`]*)[\"'`]"]
-  ]
+  ],
+  "js/ts.tsdk.path": "node_modules/typescript/lib"
 }
