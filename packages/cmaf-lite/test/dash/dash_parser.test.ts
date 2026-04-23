@@ -365,6 +365,17 @@ describe("DashParser", () => {
       expect(url).toContain("v-1.m4s");
     });
 
+    it("uses SegmentTimeline when both @duration and <SegmentTimeline> are present", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-timeline-with-duration.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // <S r=2> produces 3 segments at 4s each; @duration="9999999" is ignored.
+      expect(segments).toHaveLength(3);
+      expect(segments[0]!.end - segments[0]!.start).toBeCloseTo(4, 5);
+    });
+
     it("generates the correct number of segments from SegmentTimeline with repeat count", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-timeline.mpd"),
