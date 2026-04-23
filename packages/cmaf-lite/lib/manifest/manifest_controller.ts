@@ -62,7 +62,7 @@ export class ManifestController {
       isUpdate,
     });
 
-    if (this.timer_) {
+    if (this.timer_ && this.manifest_.isLive) {
       const { liveUpdateTime } = this.player_.getConfig();
       this.timer_.tickAfter(liveUpdateTime);
     }

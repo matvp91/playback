@@ -2,17 +2,13 @@
   "name": "cmaf-lite",
   "version": "0.0.2",
   "type": "module",
-  "main": "./dist/main.mjs",
-  "module": "./dist/main.mjs",
-  "types": "./dist/main.d.mts",
+  "main": "./dist/main.js",
+  "module": "./dist/main.js",
+  "types": "./dist/main.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/main.mjs",
-      "types": "./dist/main.d.mts"
-    },
-    "./dash": {
-      "import": "./dist/dash.mjs",
-      "types": "./dist/dash.d.mts"
+      "import": "./dist/main.js",
+      "types": "./dist/main.d.ts"
     }
   },
   "files": [
@@ -30,6 +26,7 @@
     "@microsoft/api-documenter": "^7.30.0",
     "@microsoft/api-extractor": "^7.58.2",
     "@relative-ci/rollup-plugin": "^5.3.1",
+    "@swc/core": "^1.15.30",
     "@types/node": "^25.5.2",
     "happy-dom": "^20.9.0",
     "map.prototype.getorinsertcomputed": "^1.0.1",
