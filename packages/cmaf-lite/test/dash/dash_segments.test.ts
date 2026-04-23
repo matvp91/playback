@@ -169,5 +169,46 @@ describe("DashSegments", () => {
       // firstAvailableStart reports the MPD's earliest segment, not the emitted one
       expect(firstAvailableStart).toBe(0);
     });
+
+    it("preserves init segment identity across appendSegments calls", () => {
+      // StreamController uses `segment.initSegment !== lastInitSegment` to
+      // decide whether to (re)fetch the init segment. A fresh object per
+      // manifest refresh makes it refetch every cycle for the same URL.
+      const segments: Segment[] = [];
+      const mpd = XmlUtils.parseXml(loadFixture("timeline.mpd"), "MPD");
+      const period = XmlUtils.child(mpd, "Period");
+      asserts.assertExists(period, "Period not found");
+      const adaptationSet = XmlUtils.child(period, "AdaptationSet");
+      asserts.assertExists(adaptationSet, "AdaptationSet not found");
+      const representation = XmlUtils.child(adaptationSet, "Representation");
+      asserts.assertExists(representation, "Representation not found");
+
+      DashParser.appendSegments(
+        segments,
+        sourceUrl,
+        mpd,
+        period,
+        adaptationSet,
+        representation,
+        12,
+        /* startAfter */ -Infinity,
+      );
+      const firstInit = segments[0]!.initSegment;
+
+      DashParser.appendSegments(
+        segments,
+        sourceUrl,
+        mpd,
+        period,
+        adaptationSet,
+        representation,
+        12,
+        /* startAfter */ 4,
+      );
+
+      for (const seg of segments) {
+        expect(seg.initSegment).toBe(firstInit);
+      }
+    });
   });
 });

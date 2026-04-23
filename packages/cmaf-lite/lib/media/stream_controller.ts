@@ -295,7 +295,7 @@ export class StreamController {
 
     if (segment.initSegment !== mediaState.lastInitSegment) {
       this.loadSegment_(mediaState, segment.initSegment);
-    } else {
+    } else if (segment !== mediaState.lastSegment) {
       this.loadSegment_(mediaState, segment);
     }
   }

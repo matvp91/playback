@@ -369,9 +369,14 @@ export function appendSegments(
     bandwidth,
     null,
   );
-  const initSegment: InitSegment = {
-    url: UrlUtils.resolveUrl(uri, baseUrl),
-  };
+  const initUrl = UrlUtils.resolveUrl(uri, baseUrl);
+  const existingInit = target[0]?.initSegment;
+  if (existingInit && existingInit.url !== initUrl) {
+    throw new Error(
+      `Init segment URL changed for track: ${existingInit.url} -> ${initUrl}`,
+    );
+  }
+  const initSegment: InitSegment = existingInit ?? { url: initUrl };
 
   let maxSegmentDuration = 0;
   let firstAvailableStart = Number.POSITIVE_INFINITY;
