@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManifest } from "../../lib/dash/dash_parser";
+import { parseManifest, updateManifest } from "../../lib/dash/dash_parser";
 import { MediaType } from "../../lib/types/media";
 import { loadFixture } from "../fixtures";
 
@@ -191,5 +191,61 @@ describe("DashParser", () => {
     )!;
     const ids = video.tracks.map((t) => t.id).sort();
     expect(ids).toEqual(["1", "2"]);
+  });
+});
+
+describe("DashParser.updateManifest", () => {
+  const sourceUrl = "https://cdn.test/manifest.mpd";
+
+  it("preserves manifest, switching set, track, and segment references when applied twice to the same MPD", () => {
+    const text = loadFixture("basic.mpd");
+    const manifest = parseManifest(text, sourceUrl);
+
+    const switchingSetsRef = manifest.switchingSets;
+    const firstSet = switchingSetsRef[0]!;
+    const firstTrack = firstSet.tracks[0]!;
+    const tracksRef = firstSet.tracks;
+    const segmentsRef = firstTrack.segments;
+    const firstSegment = segmentsRef[0]!;
+    const segmentCount = segmentsRef.length;
+
+    updateManifest(manifest, text, sourceUrl);
+
+    expect(manifest.switchingSets).toBe(switchingSetsRef);
+    expect(manifest.switchingSets[0]).toBe(firstSet);
+    expect(firstSet.tracks).toBe(tracksRef);
+    expect(firstSet.tracks[0]).toBe(firstTrack);
+    expect(firstTrack.segments).toBe(segmentsRef);
+    expect(firstTrack.segments[0]).toBe(firstSegment);
+    expect(firstTrack.segments.length).toBeGreaterThanOrEqual(segmentCount);
+  });
+
+  it("extends an existing track's segments when a second MPD adds tail segments", () => {
+    const sourceText = loadFixture("timeline.mpd");
+    const manifest = parseManifest(sourceText, sourceUrl);
+
+    const video = manifest.switchingSets.find(
+      (ss) => ss.type === MediaType.VIDEO,
+    )!;
+    const track = video.tracks[0]!;
+    const originalSegments = track.segments;
+    const originalCount = originalSegments.length;
+    const originalFirst = originalSegments[0]!;
+    const originalLast = originalSegments.at(-1)!;
+
+    const extendedText = sourceText.replace(
+      /<S t="0" d="360000" r="\d+" \/>/,
+      (match) => {
+        const rMatch = /r="(\d+)"/.exec(match);
+        const nextR = rMatch ? Number(rMatch[1]) + 5 : 5;
+        return `<S t="0" d="360000" r="${nextR}" />`;
+      },
+    );
+    updateManifest(manifest, extendedText, sourceUrl);
+
+    expect(track.segments).toBe(originalSegments);
+    expect(track.segments.length).toBeGreaterThan(originalCount);
+    expect(track.segments[0]).toBe(originalFirst);
+    expect(track.segments[originalCount - 1]).toBe(originalLast);
   });
 });
