@@ -208,6 +208,16 @@ describe("DashParser", () => {
       expect(p2Segments[0]!.start).toBeGreaterThanOrEqual(30);
     });
 
+    it("flattens a multi-period SegmentTimeline manifest into one track with concatenated segments", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-multi-period-timeline.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // Period 1: [0, 4, 8] (3 segments); Period 2: [12, 16, 20] (3 segments)
+      expect(segments.map((s) => s.start)).toEqual([0, 4, 8, 12, 16, 20]);
+    });
+
     it("last segment covers the full presentation duration", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-basic.mpd"),
