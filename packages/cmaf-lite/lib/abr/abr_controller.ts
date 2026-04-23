@@ -24,7 +24,7 @@ export class AbrController {
     const abrConfig = player.getConfig().abr;
     this.bandwidthEstimator_ = new EwmaBandwidthEstimator(abrConfig);
 
-    this.player_.on(Events.STREAMS_UPDATED, this.onStreamsUpdated_);
+    this.player_.on(Events.STREAMS_CREATED, this.onStreamsCreated_);
     this.player_.on(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
   }
 
@@ -46,11 +46,12 @@ export class AbrController {
 
   destroy() {
     this.timer_.stop();
-    this.player_.off(Events.STREAMS_UPDATED, this.onStreamsUpdated_);
+    this.player_.off(Events.STREAMS_CREATED, this.onStreamsCreated_);
     this.player_.off(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
   }
 
-  private onStreamsUpdated_ = () => {
+  private onStreamsCreated_ = () => {
+    // TODO(matvp): Pass streamsMap as event & introduce StreamsCreatedEvent.
     this.streams_ = this.player_.getStreams(MediaType.VIDEO);
 
     // Run a first evalulation to contribute to the initial stream selection.
