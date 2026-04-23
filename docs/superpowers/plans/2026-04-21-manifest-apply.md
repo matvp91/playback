@@ -4,7 +4,7 @@
 
 **Goal:** Refactor the DASH parser so a fresh MPD can either build a new `Manifest` or update an existing one in place, via a shared core. Preserve identity (`Manifest`, `SwitchingSet`, `Track`, `Segment` references) across updates.
 
-**Architecture:** Four-file DASH module. `dash_parser.ts` exposes `parseManifest` and `updateManifest` backed by a shared `applyMpd`. `dash_periods.ts` owns period iteration. `dash_adaptations.ts` (new) owns SwitchingSet/Track construction + upsert, keyed by a per-call `ApplyContext` (lookup Maps that hydrate from the existing Manifest on the update path). `dash_segments.ts` owns segment materialization: `appendSegments` pushes into a caller-provided target array via pure slot generators (`getTimelineSlots`, `getDurationSlots`) behind a single URL/timing loop.
+**Architecture:** Four-file DASH module. `dash_parser.ts` exposes `parseManifest` and `updateManifest` backed by a shared `applyMpd`. `dash_periods.ts` owns period iteration. `dash_adaptations.ts` (new) owns SwitchingSet/Track construction + upsert, keyed by a per-call `ApplyContext` (lookup Maps that hydrate from the existing Manifest on the update path). `dash_segments.ts` owns segment materialization: `appendSegments` pushes directly into a caller-provided target array, with inlined timeline / duration branches — no intermediate collection.
 
 **Tech Stack:** TypeScript, Vitest (happy-dom), Biome, pnpm. Existing DASH parser fixtures are the regression harness; all current tests must stay green end-to-end.
 
@@ -19,7 +19,7 @@
 | `packages/cmaf-lite/lib/dash/dash_parser.ts` | Entry points `parseManifest`, `updateManifest`; shared `applyMpd`, `resolveDuration` |
 | `packages/cmaf-lite/lib/dash/dash_periods.ts` | `applyPeriods` (iteration), `resolvePeriodDuration` |
 | `packages/cmaf-lite/lib/dash/dash_adaptations.ts` *(new)* | `ApplyContext`, `createContext`, `upsertSwitchingSet`, `upsertTrack`, `buildTrack`, `parseAdaptationSet`, `getAdaptationSetId`, `resolveType`, `resolveCodec` |
-| `packages/cmaf-lite/lib/dash/dash_segments.ts` | `appendSegments`, `getTimelineSlots`, `getDurationSlots`, `resolveSegmentTemplate`, `resolveBaseUrl` |
+| `packages/cmaf-lite/lib/dash/dash_segments.ts` | `appendSegments`, `resolveSegmentTemplate`, `resolveBaseUrl` |
 | `packages/cmaf-lite/test/dash/dash_parser.test.ts` | Existing behavior tests (unchanged) + new `updateManifest` behavior tests |
 | `packages/cmaf-lite/test/dash/dash_segments.test.ts` | Existing behavior tests (unchanged) |
 
@@ -35,7 +35,7 @@ dash_parser → dash_periods → dash_adaptations
 
 ## Task 1: Segments layer rewrite
 
-Rewrite `dash_segments.ts` to expose `appendSegments` instead of `parseSegmentData`. Introduce pure slot generators. Absorb `resolveBaseUrl` from `dash_periods.ts`. Temporarily adapt the single callsite in `dash_periods.ts`; structural changes to periods land in later tasks.
+Rewrite `dash_segments.ts` to expose `appendSegments` instead of `parseSegmentData`. Inline both template-addressing branches (SegmentTimeline and `@duration`) so each pushes directly into `target` — no intermediate collection. Absorb `resolveBaseUrl` from `dash_periods.ts`. Temporarily adapt the single callsite in `dash_periods.ts`; structural changes to periods land in later tasks.
 
 **Files:**
 - Modify: `packages/cmaf-lite/lib/dash/dash_segments.ts`
@@ -53,8 +53,6 @@ import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
-
-type Slot = { time: number; duration: number; number: number };
 
 export function appendSegments(
   target: Segment[],
@@ -106,13 +104,47 @@ export function appendSegments(
     ),
   };
 
-  const timeline = XmlUtils.child(st, "SegmentTimeline");
-  const slots = timeline
-    ? getTimelineSlots(timeline, startNumber)
-    : getDurationSlots(st, startNumber, timescale, periodDuration);
-
   let maxSegmentDuration = 0;
-  for (const { time, duration, number } of slots) {
+
+  const timeline = XmlUtils.child(st, "SegmentTimeline");
+  if (timeline) {
+    let time = 0;
+    let number = startNumber;
+    for (const s of XmlUtils.children(timeline, "S")) {
+      const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
+      asserts.assertExists(duration, "segment duration is mandatory");
+      const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
+      time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
+      for (let i = 0; i <= r; i++) {
+        const url = UrlUtils.resolveUrl(
+          processUriTemplate(media, id, number, null, bandwidth, time),
+          baseUrl,
+        );
+        const start = (time - pto) / timescale + periodStart;
+        const end = (time - pto + duration) / timescale + periodStart;
+        target.push({ url, start, end, initSegment });
+        maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
+        time += duration;
+        number++;
+      }
+    }
+    return maxSegmentDuration;
+  }
+
+  const duration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
+  asserts.assertExists(
+    duration,
+    "SegmentTemplate requires either SegmentTimeline or @duration",
+  );
+  asserts.assertExists(
+    periodDuration,
+    "Duration-based addressing requires a resolvable period duration",
+  );
+
+  const count = Math.ceil(periodDuration / (duration / timescale));
+  for (let i = 0; i < count; i++) {
+    const number = startNumber + i;
+    const time = i * duration;
     const url = UrlUtils.resolveUrl(
       processUriTemplate(media, id, number, null, bandwidth, time),
       baseUrl,
@@ -139,50 +171,6 @@ export function resolveBaseUrl(
     sourceUrl,
     ...baseUrls.filter((u): u is string => u != null),
   ]);
-}
-
-function getTimelineSlots(
-  timeline: txml.TNode,
-  startNumber: number,
-): Slot[] {
-  const slots: Slot[] = [];
-  let time = 0;
-  let number = startNumber;
-  for (const s of XmlUtils.children(timeline, "S")) {
-    const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
-    asserts.assertExists(duration, "segment duration is mandatory");
-    const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
-    time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
-    for (let i = 0; i <= r; i++) {
-      slots.push({ time, duration, number });
-      time += duration;
-      number++;
-    }
-  }
-  return slots;
-}
-
-function getDurationSlots(
-  st: txml.TNode,
-  startNumber: number,
-  timescale: number,
-  periodDuration: number | null,
-): Slot[] {
-  const duration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
-  asserts.assertExists(
-    duration,
-    "SegmentTemplate requires either SegmentTimeline or @duration",
-  );
-  asserts.assertExists(
-    periodDuration,
-    "Duration-based addressing requires a resolvable period duration",
-  );
-  const count = Math.ceil(periodDuration / (duration / timescale));
-  const slots: Slot[] = [];
-  for (let i = 0; i < count; i++) {
-    slots.push({ time: i * duration, duration, number: startNumber + i });
-  }
-  return slots;
 }
 
 function resolveSegmentTemplate(
@@ -328,12 +316,12 @@ Expected: no diagnostics, no file rewrites.
 
 ```bash
 git add packages/cmaf-lite/lib/dash/dash_segments.ts packages/cmaf-lite/lib/dash/dash_periods.ts
-git commit -m "refactor(dash): appendSegments with slot generators
+git commit -m "refactor(dash): appendSegments pushes directly into target
 
-Replace parseSegmentData with appendSegments that pushes into a
-caller-provided target and returns maxSegmentDuration. Extract pure
-slot generators (getTimelineSlots, getDurationSlots) behind a single
-URL/timing loop. Move resolveBaseUrl into dash_segments.ts.
+Replace parseSegmentData with appendSegments that pushes segments into
+a caller-provided target and returns maxSegmentDuration. Inline both
+template-addressing branches (SegmentTimeline, @duration) — no
+intermediate collection. Move resolveBaseUrl into dash_segments.ts.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -1142,7 +1130,7 @@ Expected: clean across all packages.
 - `applyPeriods` over a context → Task 3.
 - `upsertSwitchingSet` / `upsertTrack` → Task 3.
 - `buildTrack` skeleton-only → Task 2.
-- `appendSegments` with `getTimelineSlots` / `getDurationSlots` → Task 1.
+- `appendSegments` with inlined timeline + duration branches pushing into `target` → Task 1.
 - Bandwidth / baseUrl extraction pushed down into `appendSegments` → Task 1.
 - `resolveBaseUrl` moved to `dash_segments.ts` → Task 1.
 - File layout split (`dash_adaptations.ts` new) → Task 2.
