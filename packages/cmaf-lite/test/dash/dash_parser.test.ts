@@ -263,6 +263,20 @@ describe("DashParser", () => {
       expect(track.segments[0]!.initSegment.url).toContain("rep-1");
     });
 
+    it("applies @presentationTimeOffset to segment start and end times", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-presentation-time-offset.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // timescale=1000, pto=10000, first S t=10000, d=4000 r=2.
+      // start = (time - pto) / timescale → segments at 0, 4, 8.
+      expect(segments[0]!.start).toBeCloseTo(0, 5);
+      expect(segments[0]!.end).toBeCloseTo(4, 5);
+      expect(segments[1]!.start).toBeCloseTo(4, 5);
+      expect(segments[2]!.start).toBeCloseTo(8, 5);
+    });
+
     it("last segment covers the full presentation duration", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-basic.mpd"),
