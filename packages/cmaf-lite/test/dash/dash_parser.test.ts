@@ -413,6 +413,18 @@ describe("DashParser", () => {
       expect(segments[2]!.start).toBeCloseTo(10, 5);
       expect(segments[2]!.end).toBeCloseTo(12, 5);
     });
+
+    it("expands $Time$ placeholder in segment URLs", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-timeline-reset.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // Timeline: t=0 d=360000 r=1, then t=900000 d=180000.
+      // First segment time=0, third time=900000.
+      expect(segments[0]!.url).toContain("-0.m4s");
+      expect(segments[2]!.url).toContain("-900000.m4s");
+    });
   });
 
   describe("errors", () => {
