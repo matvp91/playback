@@ -2,6 +2,7 @@ import type {
   AdaptationEvent,
   BufferFlushedEvent,
   ManifestCreatedEvent,
+  ManifestUpdatedEvent,
   MediaAttachedEvent,
 } from "../events";
 import { Events } from "../events";
@@ -33,6 +34,7 @@ type MediaState = {
 };
 
 export class StreamController {
+  private isLive_ = false;
   private streamsMap_ = new Map<MediaType, Stream[]>();
   private streams_ = new Map<MediaType, Stream>();
   private media_: HTMLMediaElement | null = null;
@@ -40,6 +42,7 @@ export class StreamController {
 
   constructor(private player_: Player) {
     this.player_.on(Events.MANIFEST_CREATED, this.onManifestCreated_);
+    this.player_.on(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -69,6 +72,7 @@ export class StreamController {
       mediaState.timer.stop();
     }
     this.player_.off(Events.MANIFEST_CREATED, this.onManifestCreated_);
+    this.player_.off(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -77,10 +81,16 @@ export class StreamController {
   }
 
   private onManifestCreated_ = (event: ManifestCreatedEvent) => {
+    this.isLive_ = event.manifest.isLive;
     this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
     log.info("Streams", this.streamsMap_);
     this.player_.emit(Events.STREAMS_UPDATED);
     this.tryStart_();
+  };
+
+  private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
+    this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
+    this.player_.emit(Events.STREAMS_UPDATED);
   };
 
   private onMediaAttached_ = (event: MediaAttachedEvent) => {
@@ -157,6 +167,17 @@ export class StreamController {
     this.media_ = null;
   };
 
+  private getInitialTime_(stream: Stream): number {
+    if (!this.isLive_) {
+      return 0;
+    }
+    const { segments } = stream.hierarchy.track;
+    const liveEdge = segments.at(-1)?.end ?? 0;
+    const firstSegmentStart = segments[0]?.start ?? 0;
+    const { liveDelay } = this.player_.getConfig();
+    return Math.max(liveEdge - liveDelay, firstSegmentStart);
+  }
+
   private resolveStream_(type: MediaType, streams: Stream[]): Stream {
     asserts.assertExists(streams[0], "No Streams");
     const { preferences } = this.player_.getConfig();
@@ -219,6 +240,15 @@ export class StreamController {
         oldStream: null,
         stream,
       });
+    }
+
+    if (this.isLive_ && this.media_) {
+      const videoStream = this.streams_.get(MediaType.VIDEO);
+      const referenceStream =
+        videoStream ?? this.streams_.values().next().value;
+      if (referenceStream) {
+        this.media_.currentTime = this.getInitialTime_(referenceStream);
+      }
     }
 
     for (const mediaState of this.mediaStates_.values()) {
@@ -354,6 +384,9 @@ export class StreamController {
   }
 
   private isEnded_(mediaState: MediaState, stream: Stream): boolean {
+    if (this.isLive_) {
+      return false;
+    }
     if (!mediaState.lastSegment) {
       return false;
     }
