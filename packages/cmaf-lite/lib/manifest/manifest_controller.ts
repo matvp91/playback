@@ -1,4 +1,4 @@
-import { parseManifest } from "../dash/mpd";
+import { parseManifest } from "../dash/dash_parser";
 import type { ManifestLoadingEvent } from "../events";
 import { Events } from "../events";
 import type { NetworkRequest } from "../net/network_request";

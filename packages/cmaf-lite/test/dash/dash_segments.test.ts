@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManifest } from "../../lib/dash/mpd";
+import { parseManifest } from "../../lib/dash/dash_parser";
 import { MediaType } from "../../lib/types/media";
 import { loadFixture } from "../fixtures";
 
