@@ -315,10 +315,41 @@ describe("DashParser", () => {
         sourceUrl,
       );
       const segments = findVideo(manifest).tracks[0]!.segments;
-      // 12s / 4s = 3 segments
+      // periodDuration=12s, timescale=1000, duration=4000 → 3 segments.
       expect(segments).toHaveLength(3);
-      expect(segments[0]!.initSegment.url).toContain("video-init.mp4");
-      expect(segments[0]!.url).toContain("video-");
+      expect(segments[0]!.initSegment.url).toContain("v-init.mp4");
+      expect(segments[0]!.url).toContain("v-");
+    });
+
+    it("inherits @startNumber from a Period-level SegmentTemplate", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-inherited-template.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // startNumber=5 on Period-level template → first segment URL contains "v-5.m4s".
+      expect(segments[0]!.url).toContain("v-5.m4s");
+    });
+
+    it("inherits @duration from a Period-level SegmentTemplate", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-inherited-template.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // duration=4000 / timescale=1000 → 4s per segment.
+      expect(segments[0]!.end - segments[0]!.start).toBeCloseTo(4, 5);
+    });
+
+    it("inherits @presentationTimeOffset from a Period-level SegmentTemplate", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-inherited-template.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // pto=8000, timescale=1000; duration-based addressing uses time=i*duration,
+      // so start = (0 - 8000)/1000 = -8 for the first segment.
+      expect(segments[0]!.start).toBeCloseTo(-8, 5);
     });
 
     it("generates the correct number of segments from SegmentTimeline with repeat count", () => {
