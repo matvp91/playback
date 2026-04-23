@@ -38,7 +38,7 @@ test/
     helpers.ts                   # new, pure helpers
     dash_segments.test.ts        # DELETED
   fixtures/
-    dash-parser/                 # moved + new; 25 fixtures
+    dash-parser/                 # moved + new; 26 fixtures
       vod-*.mpd
       live-*.mpd
     index.ts                     # existing loadFixture, unchanged signature
@@ -79,6 +79,7 @@ All fixtures live in `test/fixtures/dash-parser/`. Naming rules:
 | `vod-mimetype-fallback.mpd` | `contentType` absent; media type inferred from `mimeType`. |
 | `vod-inherited-template.mpd` | `SegmentTemplate` at Period level carrying `initialization`, `media`, `timescale`, `startNumber`, `duration`, `presentationTimeOffset` — all inherited by AdaptationSet/Representation. |
 | `vod-codec-on-adaptation-set.mpd` | `codecs` attribute on `AdaptationSet`, absent on `Representation` — verifies fallback. |
+| `vod-timeline.mpd` | `SegmentTimeline` with a simple `<S t="0" d="…" r="…" />` entry — pins `@r` repeat count and start/end arithmetic (existing fixture, moved). |
 | `vod-timeline-reset.mpd` | `SegmentTimeline` with explicit `@t` resetting time; `$Time$` placeholder in media URL. |
 | `vod-timeline-with-duration.mpd` | `SegmentTemplate` declares both `@duration` **and** `<SegmentTimeline>` — timeline wins, `@duration` ignored. |
 | `vod-url-placeholders.mpd` | Media template uses `$Bandwidth$` and `$RepresentationID$`. |
@@ -102,7 +103,7 @@ All fixtures live in `test/fixtures/dash-parser/`. Naming rules:
 | `live-timeline-growing-1.mpd` / `live-timeline-growing-2.mpd` | DVR window **grows**: tail extends, head unchanged (early in the stream before the window fills). |
 | `live-multi-period-timeline-1.mpd` / `live-multi-period-timeline-2.mpd` | Two-period live manifest, both periods using `SegmentTimeline`; snapshot 2 shifts the DVR window forward. Used exclusively by the skipped multi-period-update bug test. |
 
-**Total: 25 fixtures** (18 VOD + 7 LIVE).
+**Total: 26 fixtures** (19 VOD + 7 LIVE).
 
 ## Helpers (`test/dash/helpers.ts`)
 
@@ -263,7 +264,7 @@ phase will sequence the work so every commit leaves `pnpm test` green.
 
 ## Risks
 
-1. **Fixture bloat.** 25 `.mpd` files is a lot. Mitigated by the
+1. **Fixture bloat.** 26 `.mpd` files is a lot. Mitigated by the
    `vod-` / `live-` / `-N` naming convention and the dedicated
    subdirectory. Each fixture targets a specific behavior.
 2. **Skipped multi-period test drifts.** An `it.skip` can rot silently.
