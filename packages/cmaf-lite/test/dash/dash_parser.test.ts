@@ -105,6 +105,22 @@ describe("DashParser", () => {
       );
       expect(findVideo(manifest).codec).toBe("avc1.64001f");
     });
+
+    it("creates separate audio switching sets per language and normalizes lang='und' to 'unk'", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-multi-language-audio.mpd"),
+        sourceUrl,
+      );
+      const audios = manifest.switchingSets.filter(
+        (ss) => ss.type === MediaType.AUDIO,
+      );
+      const ids = audios.map((ss) => ss.id).sort();
+      expect(ids).toEqual([
+        "audio:mp4a.40.2:en",
+        "audio:mp4a.40.2:fr",
+        "audio:mp4a.40.2:unk",
+      ]);
+    });
   });
 
   describe("segments", () => {
