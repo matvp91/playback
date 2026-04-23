@@ -171,16 +171,10 @@ describe("DashParser", () => {
   });
 
   it("sets isLive to true for a dynamic MPD", () => {
-    const dynamicMpd = `<?xml version="1.0" encoding="UTF-8"?>
-<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" mediaPresentationDuration="PT60S">
-  <Period>
-    <AdaptationSet contentType="video" mimeType="video/mp4" codecs="avc1.64001f">
-      <SegmentTemplate timescale="90000" media="v-$Number$.m4s" initialization="v-init.mp4" startNumber="1" duration="360000" />
-      <Representation id="1" bandwidth="2000000" width="1920" height="1080" />
-    </AdaptationSet>
-  </Period>
-</MPD>`;
-    const manifest = DashParser.create(dynamicMpd, sourceUrl);
+    const manifest = DashParser.create(
+      loadFixture("dash-parser/live-basic.mpd"),
+      sourceUrl,
+    );
     expect(manifest.isLive).toBe(true);
   });
 });
