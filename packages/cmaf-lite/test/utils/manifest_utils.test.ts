@@ -29,13 +29,13 @@ describe("ManifestUtils", () => {
   });
 
   describe("pruneSegments", () => {
-    it("removes segments with start below the threshold", () => {
+    it("removes segments with start in [periodStart, firstKeptStart)", () => {
       const segments = [
         createSegment({ start: 0, end: 4 }),
         createSegment({ start: 4, end: 8 }),
         createSegment({ start: 8, end: 12 }),
       ];
-      pruneSegments(segments, 8);
+      pruneSegments(segments, 0, 8);
       expect(segments).toHaveLength(1);
       expect(segments[0]!.start).toBe(8);
     });
@@ -47,32 +47,59 @@ describe("ManifestUtils", () => {
         createSegment({ start: 4, end: 8 }),
         kept,
       ];
-      pruneSegments(segments, 8);
+      pruneSegments(segments, 0, 8);
       expect(segments[0]).toBe(kept);
     });
 
-    it("is a no-op when threshold is below the first segment", () => {
+    it("is a no-op when firstKeptStart is at or below periodStart", () => {
       const segments = [
         createSegment({ start: 0, end: 4 }),
         createSegment({ start: 4, end: 8 }),
       ];
-      pruneSegments(segments, -Infinity);
+      pruneSegments(segments, 0, 0);
       expect(segments).toHaveLength(2);
     });
 
     it("is a no-op on an empty array", () => {
       const segments: Segment[] = [];
-      pruneSegments(segments, 5);
+      pruneSegments(segments, 0, 5);
       expect(segments).toHaveLength(0);
     });
 
-    it("empties the array when threshold exceeds all starts", () => {
+    it("empties the array when firstKeptStart exceeds every segment in range", () => {
       const segments = [
         createSegment({ start: 0, end: 4 }),
         createSegment({ start: 4, end: 8 }),
       ];
-      pruneSegments(segments, 10);
+      pruneSegments(segments, 0, 10);
       expect(segments).toHaveLength(0);
+    });
+
+    it("leaves earlier-period segments untouched", () => {
+      // Simulates Period 2's call: only segments at or above periodStart=12
+      // may be pruned. Prior-period segments must stay.
+      const segments = [
+        createSegment({ start: 0, end: 4 }),
+        createSegment({ start: 4, end: 8 }),
+        createSegment({ start: 8, end: 12 }),
+        createSegment({ start: 12, end: 16 }),
+        createSegment({ start: 16, end: 20 }),
+      ];
+      pruneSegments(segments, 12, 16);
+      expect(segments.map((s) => s.start)).toEqual([0, 4, 8, 16]);
+    });
+
+    it("is a no-op within a later period when its timeline hasn't slid", () => {
+      // Simulates Period 2 where firstKeptStart === periodStart — the
+      // common case. No segments should be removed from either period.
+      const segments = [
+        createSegment({ start: 0, end: 4 }),
+        createSegment({ start: 4, end: 8 }),
+        createSegment({ start: 12, end: 16 }),
+        createSegment({ start: 16, end: 20 }),
+      ];
+      pruneSegments(segments, 12, 12);
+      expect(segments).toHaveLength(4);
     });
   });
 });
