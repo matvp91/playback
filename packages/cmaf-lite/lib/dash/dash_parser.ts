@@ -57,29 +57,29 @@ function readMpd(manifest: Manifest, text: string, sourceUrl: string): void {
     throw new Error("No Period found in manifest");
   }
 
-  const rc = createContext(manifest, mpd, sourceUrl);
+  const ctx = createContext(manifest, mpd, sourceUrl);
   for (let i = 0; i < periods.length; i++) {
-    readPeriod(rc, periods, i);
+    readPeriod(ctx, periods, i);
   }
   manifest.duration = resolveDuration(mpd, manifest.switchingSets);
 }
 
 function readPeriod(
-  rc: ReadContext,
+  ctx: ReadContext,
   periods: txml.TNode[],
   periodIndex: number,
 ): void {
   const period = periods[periodIndex];
   asserts.assertExists(period, "Period not found");
-  const periodDuration = resolvePeriodDuration(rc.mpd, periods, periodIndex);
+  const periodDuration = resolvePeriodDuration(ctx.mpd, periods, periodIndex);
 
   for (const adaptationSet of XmlUtils.children(period, "AdaptationSet")) {
-    readAdaptationSet(rc, period, adaptationSet, periodDuration);
+    readAdaptationSet(ctx, period, adaptationSet, periodDuration);
   }
 }
 
 function readAdaptationSet(
-  rc: ReadContext,
+  ctx: ReadContext,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   periodDuration: number | null,
@@ -89,11 +89,11 @@ function readAdaptationSet(
     return;
   }
 
-  const switchingSet = upsertSwitchingSet(rc, adaptationSet, representations);
+  const switchingSet = upsertSwitchingSet(ctx, adaptationSet, representations);
 
   for (const representation of representations) {
     readRepresentation(
-      rc,
+      ctx,
       period,
       adaptationSet,
       representation,
@@ -104,17 +104,17 @@ function readAdaptationSet(
 }
 
 function readRepresentation(
-  rc: ReadContext,
+  ctx: ReadContext,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
   switchingSet: SwitchingSet,
   periodDuration: number | null,
 ): void {
-  const track = upsertTrack(rc, switchingSet, adaptationSet, representation);
+  const track = upsertTrack(ctx, switchingSet, adaptationSet, representation);
   const max = appendSegments(
     track.segments,
-    rc,
+    ctx,
     period,
     adaptationSet,
     representation,
@@ -128,39 +128,39 @@ function createContext(
   mpd: txml.TNode,
   sourceUrl: string,
 ): ReadContext {
-  const rc: ReadContext = {
+  const ctx: ReadContext = {
     sets: manifest.switchingSets,
     switchingSetsById: new Map(),
     tracksById: new Map(),
     mpd,
     sourceUrl,
   };
-  for (const set of manifest.switchingSets) {
-    rc.switchingSetsById.set(set.id, set);
-    for (const track of set.tracks) {
-      rc.tracksById.set(`${set.id}:${track.id}`, track);
+  for (const switchingSet of manifest.switchingSets) {
+    ctx.switchingSetsById.set(switchingSet.id, switchingSet);
+    for (const track of switchingSet.tracks) {
+      ctx.tracksById.set(`${switchingSet.id}:${track.id}`, track);
     }
   }
-  return rc;
+  return ctx;
 }
 
 function upsertSwitchingSet(
-  rc: ReadContext,
+  ctx: ReadContext,
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
   const id = getAdaptationSetId(adaptationSet, representations);
-  let set = rc.switchingSetsById.get(id);
-  if (!set) {
-    set = parseAdaptationSet(id, adaptationSet, representations);
-    rc.switchingSetsById.set(id, set);
-    rc.sets.push(set);
+  let switchingSet = ctx.switchingSetsById.get(id);
+  if (!switchingSet) {
+    switchingSet = parseAdaptationSet(id, adaptationSet, representations);
+    ctx.switchingSetsById.set(id, switchingSet);
+    ctx.sets.push(switchingSet);
   }
-  return set;
+  return switchingSet;
 }
 
 function upsertTrack(
-  rc: ReadContext,
+  ctx: ReadContext,
   switchingSet: SwitchingSet,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
@@ -168,7 +168,7 @@ function upsertTrack(
   const trackId = XmlUtils.attr(representation, "id", XmlUtils.parseString);
   asserts.assertExists(trackId, "Representation@id is mandatory");
   const key = `${switchingSet.id}:${trackId}`;
-  let track = rc.tracksById.get(key);
+  let track = ctx.tracksById.get(key);
   if (!track) {
     track = buildTrack(
       switchingSet.type,
@@ -180,7 +180,7 @@ function upsertTrack(
       track.type === switchingSet.type,
       "Track type must match SwitchingSet type",
     );
-    rc.tracksById.set(key, track);
+    ctx.tracksById.set(key, track);
     (switchingSet.tracks as Track[]).push(track);
   }
   return track;
@@ -269,12 +269,12 @@ function buildTrack(
   asserts.assertExists(bandwidth, "bandwidth is mandatory");
 
   if (type === MediaType.VIDEO) {
-    const width = Functional.findMap([representation, adaptationSet], (n) =>
-      XmlUtils.attr(n, "width", XmlUtils.parseNumber),
+    const width = Functional.findMap([representation, adaptationSet], (node) =>
+      XmlUtils.attr(node, "width", XmlUtils.parseNumber),
     );
     asserts.assertExists(width, "width is mandatory");
-    const height = Functional.findMap([representation, adaptationSet], (n) =>
-      XmlUtils.attr(n, "height", XmlUtils.parseNumber),
+    const height = Functional.findMap([representation, adaptationSet], (node) =>
+      XmlUtils.attr(node, "height", XmlUtils.parseNumber),
     );
     asserts.assertExists(height, "height is mandatory");
     return {
@@ -298,15 +298,15 @@ function buildTrack(
 
 function appendSegments(
   target: Segment[],
-  rc: ReadContext,
+  ctx: ReadContext,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
   periodDuration: number | null,
 ): number {
   const baseUrl = resolveBaseUrl(
-    rc.sourceUrl,
-    rc.mpd,
+    ctx.sourceUrl,
+    ctx.mpd,
     period,
     adaptationSet,
     representation,
@@ -318,23 +318,32 @@ function appendSegments(
   );
   asserts.assertExists(bandwidth, "bandwidth is mandatory");
 
-  const st = resolveSegmentTemplate(period, adaptationSet, representation);
+  const segmentTemplate = resolveSegmentTemplate(
+    period,
+    adaptationSet,
+    representation,
+  );
 
   const initialization = XmlUtils.attr(
-    st,
+    segmentTemplate,
     "initialization",
     XmlUtils.parseString,
   );
   asserts.assertExists(initialization, "initialization is mandatory");
-  const media = XmlUtils.attr(st, "media", XmlUtils.parseString);
+  const media = XmlUtils.attr(segmentTemplate, "media", XmlUtils.parseString);
   asserts.assertExists(media, "media is mandatory");
 
   const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
-  const timescale = XmlUtils.attr(st, "timescale", XmlUtils.parseNumber) ?? 1;
+  const timescale =
+    XmlUtils.attr(segmentTemplate, "timescale", XmlUtils.parseNumber) ?? 1;
   const startNumber =
-    XmlUtils.attr(st, "startNumber", XmlUtils.parseNumber) ?? 1;
-  const pto =
-    XmlUtils.attr(st, "presentationTimeOffset", XmlUtils.parseNumber) ?? 0;
+    XmlUtils.attr(segmentTemplate, "startNumber", XmlUtils.parseNumber) ?? 1;
+  const presentationTimeOffset =
+    XmlUtils.attr(
+      segmentTemplate,
+      "presentationTimeOffset",
+      XmlUtils.parseNumber,
+    ) ?? 0;
   const periodStart =
     XmlUtils.attr(period, "start", XmlUtils.parseDuration) ?? 0;
 
@@ -347,22 +356,24 @@ function appendSegments(
 
   let maxSegmentDuration = 0;
 
-  const timeline = XmlUtils.child(st, "SegmentTimeline");
+  const timeline = XmlUtils.child(segmentTemplate, "SegmentTimeline");
   if (timeline) {
     let time = 0;
     let number = startNumber;
-    for (const s of XmlUtils.children(timeline, "S")) {
-      const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
+    for (const timelineEntry of XmlUtils.children(timeline, "S")) {
+      const duration = XmlUtils.attr(timelineEntry, "d", XmlUtils.parseNumber);
       asserts.assertExists(duration, "segment duration is mandatory");
-      const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
-      time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
-      for (let i = 0; i <= r; i++) {
+      const repeat =
+        XmlUtils.attr(timelineEntry, "r", XmlUtils.parseNumber) ?? 0;
+      time = XmlUtils.attr(timelineEntry, "t", XmlUtils.parseNumber) ?? time;
+      for (let i = 0; i <= repeat; i++) {
         const url = UrlUtils.resolveUrl(
           processUriTemplate(media, id, number, null, bandwidth, time),
           baseUrl,
         );
-        const start = (time - pto) / timescale + periodStart;
-        const end = (time - pto + duration) / timescale + periodStart;
+        const start = (time - presentationTimeOffset) / timescale + periodStart;
+        const end =
+          (time - presentationTimeOffset + duration) / timescale + periodStart;
         target.push({ url, start, end, initSegment });
         maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
         time += duration;
@@ -372,7 +383,11 @@ function appendSegments(
     return maxSegmentDuration;
   }
 
-  const duration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
+  const duration = XmlUtils.attr(
+    segmentTemplate,
+    "duration",
+    XmlUtils.parseNumber,
+  );
   asserts.assertExists(
     duration,
     "SegmentTemplate requires either SegmentTimeline or @duration",
@@ -390,8 +405,9 @@ function appendSegments(
       processUriTemplate(media, id, number, null, bandwidth, time),
       baseUrl,
     );
-    const start = (time - pto) / timescale + periodStart;
-    const end = (time - pto + duration) / timescale + periodStart;
+    const start = (time - presentationTimeOffset) / timescale + periodStart;
+    const end =
+      (time - presentationTimeOffset + duration) / timescale + periodStart;
     target.push({ url, start, end, initSegment });
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }

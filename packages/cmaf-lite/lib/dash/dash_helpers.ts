@@ -45,11 +45,12 @@ export function resolveCodec(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): string {
-  const firstRep = representations[0];
-  asserts.assertExists(firstRep, "No Representation found");
+  const firstRepresentation = representations[0];
+  asserts.assertExists(firstRepresentation, "No Representation found");
 
-  const codec = Functional.findMap([firstRep, adaptationSet], (n) =>
-    XmlUtils.attr(n, "codecs", XmlUtils.parseString),
+  const codec = Functional.findMap(
+    [firstRepresentation, adaptationSet],
+    (node) => XmlUtils.attr(node, "codecs", XmlUtils.parseString),
   );
   asserts.assertExists(codec, "codecs is mandatory");
 
@@ -65,19 +66,19 @@ export function resolveSegmentTemplate(
     XmlUtils.child(representation, "SegmentTemplate"),
     XmlUtils.child(adaptationSet, "SegmentTemplate"),
     XmlUtils.child(period, "SegmentTemplate"),
-  ].filter((t): t is txml.TNode => t !== undefined);
+  ].filter((template): template is txml.TNode => template !== undefined);
 
   if (templates.length === 0) {
     throw new Error("We've got to have some sort of templating");
   }
 
   const attributes: Record<string, string | null> = {};
-  for (const t of templates.slice().reverse()) {
-    Object.assign(attributes, t.attributes);
+  for (const template of templates.slice().reverse()) {
+    Object.assign(attributes, template.attributes);
   }
 
-  const segmentTimeline = Functional.findMap(templates, (t) =>
-    XmlUtils.child(t, "SegmentTimeline"),
+  const segmentTimeline = Functional.findMap(templates, (template) =>
+    XmlUtils.child(template, "SegmentTimeline"),
   );
 
   return {
@@ -99,7 +100,7 @@ export function resolveBaseUrl(
   );
   return UrlUtils.resolveUrls([
     sourceUrl,
-    ...baseUrls.filter((u): u is string => u != null),
+    ...baseUrls.filter((url): url is string => url != null),
   ]);
 }
 
