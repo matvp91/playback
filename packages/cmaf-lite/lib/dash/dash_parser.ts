@@ -24,7 +24,7 @@ import {
 } from "./dash_helpers";
 
 type ReadContext = {
-  sets: SwitchingSet[];
+  manifest: Manifest;
   switchingSetsById: Map<string, SwitchingSet>;
   tracksById: Map<string, Track>;
   sourceUrl: string;
@@ -32,9 +32,13 @@ type ReadContext = {
 };
 
 export function create(text: string, sourceUrl: string): Manifest {
-  const manifest: Manifest = { duration: 0, isLive: false, switchingSets: [] };
+  const manifest: Manifest = {
+    duration: 0,
+    isLive: false,
+    switchingSets: [],
+  };
   const mpd = XmlUtils.parseXml(text, "MPD");
-  readMpd(manifest, mpd, sourceUrl);
+  readMpd(manifest, mpd, sourceUrl, false);
   return manifest;
 }
 
@@ -51,7 +55,7 @@ function readMpd(
   manifest: Manifest,
   mpd: txml.TNode,
   sourceUrl: string,
-  isUpdate = false,
+  isUpdate: boolean,
 ): void {
   const periods = XmlUtils.children(mpd, "Period");
   if (periods.length === 0) {
@@ -145,10 +149,10 @@ function readRepresentation(
 function createContext(
   manifest: Manifest,
   sourceUrl: string,
-  isUpdate = false,
+  isUpdate: boolean,
 ): ReadContext {
   const ctx: ReadContext = {
-    sets: manifest.switchingSets,
+    manifest,
     switchingSetsById: new Map(),
     tracksById: new Map(),
     sourceUrl,
@@ -168,10 +172,11 @@ function upsertSwitchingSet(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
+  const { switchingSets } = ctx.manifest;
   const id = getAdaptationSetId(adaptationSet, representations);
   return ctx.switchingSetsById.getOrInsertComputed(id, () => {
     const switchingSet = parseAdaptationSet(id, adaptationSet, representations);
-    ctx.sets.push(switchingSet);
+    switchingSets.push(switchingSet);
     return switchingSet;
   });
 }
@@ -361,22 +366,21 @@ export function appendSegments(
   );
   const periodStart = XmlUtils.attr(period, "start", XmlUtils.parseDuration, 0);
 
-  const uri = processUriTemplate(
-    initialization,
-    id,
-    null,
-    null,
-    bandwidth,
-    null,
-  );
-  const initUrl = UrlUtils.resolveUrl(uri, baseUrl);
-  const existingInit = target[0]?.initSegment;
-  if (existingInit && existingInit.url !== initUrl) {
-    throw new Error(
-      `Init segment URL changed for track: ${existingInit.url} -> ${initUrl}`,
+  // If we have segments, we'll preserve the initSegment to keep a stable
+  // reference to it.
+  let initSegment = target[0]?.initSegment;
+  if (!initSegment) {
+    const uri = processUriTemplate(
+      initialization,
+      id,
+      null,
+      null,
+      bandwidth,
+      null,
     );
+    const url = UrlUtils.resolveUrl(uri, baseUrl);
+    initSegment = { url };
   }
-  const initSegment: InitSegment = existingInit ?? { url: initUrl };
 
   let maxSegmentDuration = 0;
   let firstAvailableStart = Number.POSITIVE_INFINITY;
