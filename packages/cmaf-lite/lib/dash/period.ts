@@ -1,9 +1,10 @@
 import type * as txml from "txml";
 import * as asserts from "../utils/asserts";
 import * as XmlUtils from "../utils/xml_utils";
-import type { ApplyContext } from "./dash_adaptations";
-import { upsertSwitchingSet, upsertTrack } from "./dash_adaptations";
-import { appendSegments } from "./dash_segments";
+import { upsertSwitchingSet } from "./adaptation_set";
+import type { ApplyContext } from "./context";
+import { upsertTrack } from "./representation";
+import { appendSegments } from "./segment";
 
 export function applyPeriods(
   ctx: ApplyContext,

@@ -2,8 +2,8 @@ import type * as txml from "txml";
 import type { Manifest, SwitchingSet } from "../types/manifest";
 import * as asserts from "../utils/asserts";
 import * as XmlUtils from "../utils/xml_utils";
-import { createContext } from "./dash_adaptations";
-import { applyPeriods } from "./dash_periods";
+import { createContext } from "./context";
+import { applyPeriods } from "./period";
 
 export function parseManifest(text: string, sourceUrl: string): Manifest {
   const manifest: Manifest = { duration: 0, switchingSets: [] };
