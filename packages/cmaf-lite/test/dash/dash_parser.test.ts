@@ -348,6 +348,54 @@ describe("DashParser.update", () => {
       expect(switchingSet.tracks[0]?.segments).toBe(segmentsArray);
     });
 
+    it("preserves references for every segment across a multi-period update", () => {
+      const text = loadFixture("multi-period.mpd");
+      const manifest = DashParser.create(text, sourceUrl);
+
+      const switchingSetsRef = manifest.switchingSets;
+      const video = manifest.switchingSets.find(
+        (ss) => ss.type === MediaType.VIDEO,
+      )!;
+      const audio = manifest.switchingSets.find(
+        (ss) => ss.type === MediaType.AUDIO,
+      )!;
+      const videoTrack = video.tracks[0]!;
+      const audioTrack = audio.tracks[0]!;
+      const videoSegmentsRef = videoTrack.segments;
+      const audioSegmentsRef = audioTrack.segments;
+      const videoSegmentsSnapshot = [...videoSegmentsRef];
+      const audioSegmentsSnapshot = [...audioSegmentsRef];
+      const videoInitSegment = videoSegmentsRef[0]!.initSegment;
+      const audioInitSegment = audioSegmentsRef[0]!.initSegment;
+
+      DashParser.update(manifest, text, sourceUrl);
+
+      expect(manifest.switchingSets).toBe(switchingSetsRef);
+      expect(
+        manifest.switchingSets.find((ss) => ss.type === MediaType.VIDEO),
+      ).toBe(video);
+      expect(
+        manifest.switchingSets.find((ss) => ss.type === MediaType.AUDIO),
+      ).toBe(audio);
+      expect(video.tracks[0]).toBe(videoTrack);
+      expect(audio.tracks[0]).toBe(audioTrack);
+      expect(videoTrack.segments).toBe(videoSegmentsRef);
+      expect(audioTrack.segments).toBe(audioSegmentsRef);
+
+      // Every segment — including those spanning both periods — must keep
+      // its identity so downstream consumers' caches stay valid.
+      expect(videoTrack.segments).toHaveLength(videoSegmentsSnapshot.length);
+      for (let i = 0; i < videoSegmentsSnapshot.length; i++) {
+        expect(videoTrack.segments[i]).toBe(videoSegmentsSnapshot[i]);
+      }
+      expect(audioTrack.segments).toHaveLength(audioSegmentsSnapshot.length);
+      for (let i = 0; i < audioSegmentsSnapshot.length; i++) {
+        expect(audioTrack.segments[i]).toBe(audioSegmentsSnapshot[i]);
+      }
+      expect(videoTrack.segments[0]!.initSegment).toBe(videoInitSegment);
+      expect(audioTrack.segments[0]!.initSegment).toBe(audioInitSegment);
+    });
+
     it("uses the refreshed MPD's first-segment start as the prune watermark", () => {
       // Edge case flagged in Task 7 review: first <S> in the updated MPD
       // has t != 0 (timeline-2 starts at t=8000 ms → start=8s).

@@ -128,8 +128,8 @@ function readRepresentation(
     ? (track.segments.at(-1)?.start ?? -Infinity)
     : -Infinity;
   const { maxSegmentDuration, firstAvailableStart } = appendSegments(
+    ctx,
     track.segments,
-    ctx.sourceUrl,
     mpd,
     period,
     adaptationSet,
@@ -306,8 +306,8 @@ function buildTrack(
 }
 
 export function appendSegments(
+  ctx: ReadContext,
   target: Segment[],
-  sourceUrl: string,
   mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
@@ -316,7 +316,7 @@ export function appendSegments(
   startAfter: number,
 ): { maxSegmentDuration: number; firstAvailableStart: number } {
   const baseUrl = resolveBaseUrl(
-    sourceUrl,
+    ctx.sourceUrl,
     mpd,
     period,
     adaptationSet,
