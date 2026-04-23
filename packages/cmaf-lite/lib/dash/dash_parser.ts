@@ -22,11 +22,6 @@ import {
   resolveType,
 } from "./dash_helpers";
 
-/**
- * Transient upsert index for a single `readMpd` call. `sets` aliases
- * `manifest.switchingSets` — pushing through the context mutates the
- * manifest in place, which is what preserves identity across updates.
- */
 type ReadContext = {
   sets: SwitchingSet[];
   switchingSetsById: Map<string, SwitchingSet>;
@@ -150,13 +145,11 @@ function upsertSwitchingSet(
   representations: txml.TNode[],
 ): SwitchingSet {
   const id = getAdaptationSetId(adaptationSet, representations);
-  let switchingSet = ctx.switchingSetsById.get(id);
-  if (!switchingSet) {
-    switchingSet = parseAdaptationSet(id, adaptationSet, representations);
-    ctx.switchingSetsById.set(id, switchingSet);
+  return ctx.switchingSetsById.getOrInsertComputed(id, () => {
+    const switchingSet = parseAdaptationSet(id, adaptationSet, representations);
     ctx.sets.push(switchingSet);
-  }
-  return switchingSet;
+    return switchingSet;
+  });
 }
 
 function upsertTrack(
@@ -168,22 +161,19 @@ function upsertTrack(
   const trackId = XmlUtils.attr(representation, "id", XmlUtils.parseString);
   asserts.assertExists(trackId, "Representation@id is mandatory");
   const key = `${switchingSet.id}:${trackId}`;
-  let track = ctx.tracksById.get(key);
-  if (!track) {
-    track = buildTrack(
+  return ctx.tracksById.getOrInsertComputed(key, () => {
+    const track = buildTrack(
       switchingSet.type,
       trackId,
       adaptationSet,
       representation,
     );
-    asserts.assert(
-      track.type === switchingSet.type,
-      "Track type must match SwitchingSet type",
-    );
-    ctx.tracksById.set(key, track);
+    // We'll have to cast tracks to Track as it is the overarching type,
+    // but we'll know that type is matching because we created the
+    // track with the same type as the switchingSet.
     (switchingSet.tracks as Track[]).push(track);
-  }
-  return track;
+    return track;
+  });
 }
 
 function getAdaptationSetId(
