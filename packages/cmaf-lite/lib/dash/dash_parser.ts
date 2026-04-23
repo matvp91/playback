@@ -26,13 +26,13 @@ type ReadContext = {
   sets: SwitchingSet[];
   switchingSetsById: Map<string, SwitchingSet>;
   tracksById: Map<string, Track>;
-  mpd: txml.TNode;
   sourceUrl: string;
 };
 
 export function create(text: string, sourceUrl: string): Manifest {
   const manifest: Manifest = { duration: 0, switchingSets: [] };
-  readMpd(manifest, text, sourceUrl);
+  const mpd = XmlUtils.parseXml(text, "MPD");
+  readMpd(manifest, mpd, sourceUrl);
   return manifest;
 }
 
@@ -41,40 +41,42 @@ export function update(
   text: string,
   sourceUrl: string,
 ): void {
-  readMpd(manifest, text, sourceUrl);
+  const mpd = XmlUtils.parseXml(text, "MPD");
+  readMpd(manifest, mpd, sourceUrl);
 }
 
-function readMpd(manifest: Manifest, text: string, sourceUrl: string): void {
-  const mpd = XmlUtils.parseXml(text, "MPD");
-
+function readMpd(manifest: Manifest, mpd: txml.TNode, sourceUrl: string): void {
   const periods = XmlUtils.children(mpd, "Period");
   if (periods.length === 0) {
     throw new Error("No Period found in manifest");
   }
 
-  const ctx = createContext(manifest, mpd, sourceUrl);
+  const ctx = createContext(manifest, sourceUrl);
   for (let i = 0; i < periods.length; i++) {
-    readPeriod(ctx, periods, i);
+    readPeriod(ctx, mpd, periods, i);
   }
+
   manifest.duration = resolveDuration(mpd, manifest.switchingSets);
 }
 
 function readPeriod(
   ctx: ReadContext,
+  mpd: txml.TNode,
   periods: txml.TNode[],
   periodIndex: number,
 ): void {
   const period = periods[periodIndex];
   asserts.assertExists(period, "Period not found");
-  const periodDuration = resolvePeriodDuration(ctx.mpd, periods, periodIndex);
+  const periodDuration = resolvePeriodDuration(mpd, periods, periodIndex);
 
   for (const adaptationSet of XmlUtils.children(period, "AdaptationSet")) {
-    readAdaptationSet(ctx, period, adaptationSet, periodDuration);
+    readAdaptationSet(ctx, mpd, period, adaptationSet, periodDuration);
   }
 }
 
 function readAdaptationSet(
   ctx: ReadContext,
+  mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   periodDuration: number | null,
@@ -89,6 +91,7 @@ function readAdaptationSet(
   for (const representation of representations) {
     readRepresentation(
       ctx,
+      mpd,
       period,
       adaptationSet,
       representation,
@@ -100,6 +103,7 @@ function readAdaptationSet(
 
 function readRepresentation(
   ctx: ReadContext,
+  mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
@@ -110,6 +114,7 @@ function readRepresentation(
   const max = appendSegments(
     track.segments,
     ctx,
+    mpd,
     period,
     adaptationSet,
     representation,
@@ -118,16 +123,11 @@ function readRepresentation(
   track.maxSegmentDuration = Math.max(track.maxSegmentDuration, max);
 }
 
-function createContext(
-  manifest: Manifest,
-  mpd: txml.TNode,
-  sourceUrl: string,
-): ReadContext {
+function createContext(manifest: Manifest, sourceUrl: string): ReadContext {
   const ctx: ReadContext = {
     sets: manifest.switchingSets,
     switchingSetsById: new Map(),
     tracksById: new Map(),
-    mpd,
     sourceUrl,
   };
   for (const switchingSet of manifest.switchingSets) {
@@ -279,6 +279,7 @@ function buildTrack(
 function appendSegments(
   target: Segment[],
   ctx: ReadContext,
+  mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
@@ -286,7 +287,7 @@ function appendSegments(
 ): number {
   const baseUrl = resolveBaseUrl(
     ctx.sourceUrl,
-    ctx.mpd,
+    mpd,
     period,
     adaptationSet,
     representation,
