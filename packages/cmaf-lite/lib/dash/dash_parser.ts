@@ -2,9 +2,24 @@ import type * as txml from "txml";
 import type { Manifest, SwitchingSet } from "../types/manifest";
 import * as asserts from "../utils/asserts";
 import * as XmlUtils from "../utils/xml_utils";
-import { flattenPeriods } from "./dash_periods";
+import { createContext } from "./dash_adaptations";
+import { applyPeriods } from "./dash_periods";
 
 export function parseManifest(text: string, sourceUrl: string): Manifest {
+  const manifest: Manifest = { duration: 0, switchingSets: [] };
+  applyMpd(manifest, text, sourceUrl);
+  return manifest;
+}
+
+export function updateManifest(
+  manifest: Manifest,
+  text: string,
+  sourceUrl: string,
+): void {
+  applyMpd(manifest, text, sourceUrl);
+}
+
+function applyMpd(manifest: Manifest, text: string, sourceUrl: string): void {
   const mpd = XmlUtils.parseXml(text, "MPD");
 
   const periods = XmlUtils.children(mpd, "Period");
@@ -12,13 +27,9 @@ export function parseManifest(text: string, sourceUrl: string): Manifest {
     throw new Error("No Period found in manifest");
   }
 
-  const switchingSets = flattenPeriods(sourceUrl, mpd, periods);
-  const duration = resolveDuration(mpd, switchingSets);
-
-  return {
-    duration,
-    switchingSets,
-  };
+  const ctx = createContext(manifest);
+  applyPeriods(ctx, sourceUrl, mpd, periods);
+  manifest.duration = resolveDuration(mpd, manifest.switchingSets);
 }
 
 function resolveDuration(
