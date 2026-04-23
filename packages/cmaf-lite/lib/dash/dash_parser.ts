@@ -121,6 +121,7 @@ function readRepresentation(
   const startAfter = ctx.isUpdate
     ? (track.segments.at(-1)?.start ?? -Infinity)
     : -Infinity;
+  const periodStart = XmlUtils.attr(period, "start", XmlUtils.parseDuration, 0);
   const { maxSegmentDuration, firstAvailableStart } = appendSegments(
     ctx,
     track.segments,
@@ -128,16 +129,11 @@ function readRepresentation(
     period,
     adaptationSet,
     representation,
+    periodStart,
     periodDuration,
     startAfter,
   );
   if (ctx.isUpdate) {
-    const periodStart = XmlUtils.attr(
-      period,
-      "start",
-      XmlUtils.parseDuration,
-      0,
-    );
     ManifestUtils.pruneSegments(
       track.segments,
       periodStart,
@@ -316,6 +312,7 @@ function appendSegments(
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
+  periodStart: number,
   periodDuration: number | null,
   startAfter: number,
 ): { maxSegmentDuration: number; firstAvailableStart: number } {
@@ -368,7 +365,6 @@ function appendSegments(
     XmlUtils.parseNumber,
     0,
   );
-  const periodStart = XmlUtils.attr(period, "start", XmlUtils.parseDuration, 0);
 
   // If we have segments, we'll preserve the initSegment to keep a stable
   // reference to it.
