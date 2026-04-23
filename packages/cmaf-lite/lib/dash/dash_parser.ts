@@ -10,13 +10,13 @@ import type {
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
-import * as LanguageUtils from "../utils/language_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import {
   resolveBaseUrl,
   resolveCodec,
   resolveDuration,
+  resolveLanguage,
   resolvePeriodDuration,
   resolveSegmentTemplate,
   resolveType,
@@ -188,15 +188,11 @@ function getAdaptationSetId(
     return id;
   }
   if (type === MediaType.AUDIO) {
-    const language = LanguageUtils.toBCP47(
-      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
-    );
+    const language = resolveLanguage(adaptationSet);
     return `${id}:${language}`;
   }
   if (type === MediaType.SUBTITLE) {
-    const language = LanguageUtils.toBCP47(
-      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
-    );
+    const language = resolveLanguage(adaptationSet);
     return `${id}:${language}`;
   }
   throw new Error("Unsupported media type");
@@ -219,9 +215,7 @@ function parseAdaptationSet(
     };
   }
   if (type === MediaType.AUDIO) {
-    const language = LanguageUtils.toBCP47(
-      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
-    );
+    const language = resolveLanguage(adaptationSet);
     return {
       id,
       type,
@@ -231,9 +225,7 @@ function parseAdaptationSet(
     };
   }
   if (type === MediaType.SUBTITLE) {
-    const language = LanguageUtils.toBCP47(
-      XmlUtils.attr(adaptationSet, "lang", XmlUtils.parseString),
-    );
+    const language = resolveLanguage(adaptationSet);
     return {
       id,
       type,

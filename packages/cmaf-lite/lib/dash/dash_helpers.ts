@@ -3,6 +3,7 @@ import type { SwitchingSet } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
+import * as LanguageUtils from "../utils/language_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 
@@ -155,4 +156,10 @@ export function resolveDuration(
   const lastSegmentEnd = switchingSets[0]?.tracks[0]?.segments.at(-1)?.end;
   asserts.assertExists(lastSegmentEnd, "Cannot resolve duration");
   return lastSegmentEnd;
+}
+
+export function resolveLanguage(node: txml.TNode) {
+  const lang = XmlUtils.attr(node, "lang", XmlUtils.parseString);
+  // TODO(matvp): Make language nullable instead of defaulting to unk.
+  return lang && lang !== "und" ? LanguageUtils.toBCP47(lang) : "unk";
 }
