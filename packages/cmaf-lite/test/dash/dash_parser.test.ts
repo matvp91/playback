@@ -244,6 +244,25 @@ describe("DashParser", () => {
       expect(p2First!.url).toContain("v-8.m4s");
     });
 
+    it("expands $Bandwidth$ placeholder in segment URLs", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-url-placeholders.mpd"),
+        sourceUrl,
+      );
+      const track = findVideo(manifest).tracks[0]!;
+      expect(track.segments[0]!.url).toContain("2000000");
+    });
+
+    it("expands $RepresentationID$ placeholder in segment URLs", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-url-placeholders.mpd"),
+        sourceUrl,
+      );
+      const track = findVideo(manifest).tracks[0]!;
+      expect(track.segments[0]!.url).toContain("rep-1");
+      expect(track.segments[0]!.initSegment.url).toContain("rep-1");
+    });
+
     it("last segment covers the full presentation duration", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-basic.mpd"),
