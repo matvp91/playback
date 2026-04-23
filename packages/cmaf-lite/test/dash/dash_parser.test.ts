@@ -121,6 +121,15 @@ describe("DashParser", () => {
         "audio:mp4a.40.2:unk",
       ]);
     });
+
+    it("drops AdaptationSets with zero Representations", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-no-representations.mpd"),
+        sourceUrl,
+      );
+      expect(manifest.switchingSets).toHaveLength(1);
+      expect(manifest.switchingSets[0]!.type).toBe(MediaType.VIDEO);
+    });
   });
 
   describe("segments", () => {
