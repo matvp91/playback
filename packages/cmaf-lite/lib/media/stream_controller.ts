@@ -1,7 +1,7 @@
 import type {
   AdaptationEvent,
   BufferFlushedEvent,
-  ManifestParsedEvent,
+  ManifestCreatedEvent,
   MediaAttachedEvent,
 } from "../events";
 import { Events } from "../events";
@@ -39,7 +39,7 @@ export class StreamController {
   private mediaStates_ = new Map<MediaType, MediaState>();
 
   constructor(private player_: Player) {
-    this.player_.on(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.on(Events.MANIFEST_CREATED, this.onManifestCreated_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -68,7 +68,7 @@ export class StreamController {
       }
       mediaState.timer.stop();
     }
-    this.player_.off(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.off(Events.MANIFEST_CREATED, this.onManifestCreated_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -76,7 +76,7 @@ export class StreamController {
     this.mediaStates_.clear();
   }
 
-  private onManifestParsed_ = (event: ManifestParsedEvent) => {
+  private onManifestCreated_ = (event: ManifestCreatedEvent) => {
     this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
     log.info("Streams", this.streamsMap_);
     this.player_.emit(Events.STREAMS_UPDATED);

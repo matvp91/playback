@@ -42,6 +42,6 @@ export class ManifestController {
     // that it's DASH.
     const manifest = DashParser.create(response.text, response.request.url);
     log.info("Manifest", manifest);
-    this.player_.emit(Events.MANIFEST_PARSED, { manifest });
+    this.player_.emit(Events.MANIFEST_CREATED, { manifest });
   };
 }

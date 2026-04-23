@@ -3,7 +3,7 @@ import type {
   BufferAppendingEvent,
   BufferCodecsEvent,
   BufferFlushEvent,
-  ManifestParsedEvent,
+  ManifestCreatedEvent,
   MediaAttachingEvent,
 } from "../events";
 import { Events } from "../events";
@@ -38,7 +38,7 @@ export class BufferController {
   constructor(private player_: Player) {
     this.player_.on(Events.MEDIA_ATTACHING, this.onMediaAttaching_);
     this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-    this.player_.on(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.on(Events.MANIFEST_CREATED, this.onManifestCreated_);
     this.player_.on(Events.BUFFER_CODECS, this.onBufferCodecs_);
     this.player_.on(Events.BUFFER_APPENDING, this.onBufferAppending_);
     this.player_.on(Events.BUFFER_EOS, this.onBufferEos_);
@@ -56,7 +56,7 @@ export class BufferController {
   destroy() {
     this.player_.off(Events.MEDIA_ATTACHING, this.onMediaAttaching_);
     this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-    this.player_.off(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.off(Events.MANIFEST_CREATED, this.onManifestCreated_);
     this.player_.off(Events.BUFFER_CODECS, this.onBufferCodecs_);
     this.player_.off(Events.BUFFER_APPENDING, this.onBufferAppending_);
     this.player_.off(Events.BUFFER_EOS, this.onBufferEos_);
@@ -85,7 +85,7 @@ export class BufferController {
     this.opQueue_.enqueue(type, this.getFlushOperation_(type, 0, Infinity));
   };
 
-  private onManifestParsed_ = (event: ManifestParsedEvent) => {
+  private onManifestCreated_ = (event: ManifestCreatedEvent) => {
     this.manifest_ = event.manifest;
     this.updateDuration_();
   };

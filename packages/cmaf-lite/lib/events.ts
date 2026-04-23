@@ -18,7 +18,7 @@ import type {
  */
 export const Events = {
   MANIFEST_LOADING: "manifestLoading",
-  MANIFEST_PARSED: "manifestParsed",
+  MANIFEST_CREATED: "manifestCreated",
   MEDIA_ATTACHING: "mediaAttaching",
   MEDIA_ATTACHED: "mediaAttached",
   MEDIA_DETACHING: "mediaDetaching",
@@ -47,11 +47,11 @@ export interface ManifestLoadingEvent {
 }
 
 /**
- * Fired when a manifest has been fetched and parsed.
+ * Fired when a manifest has been fetched and parsed for the first time.
  *
  * @public
  */
-export interface ManifestParsedEvent {
+export interface ManifestCreatedEvent {
   manifest: Manifest;
 }
 
@@ -196,7 +196,7 @@ export interface NetworkResponseEvent {
  */
 export interface EventMap {
   [Events.MANIFEST_LOADING]: (event: ManifestLoadingEvent) => void;
-  [Events.MANIFEST_PARSED]: (event: ManifestParsedEvent) => void;
+  [Events.MANIFEST_CREATED]: (event: ManifestCreatedEvent) => void;
   [Events.MEDIA_ATTACHING]: (event: MediaAttachingEvent) => void;
   [Events.MEDIA_ATTACHED]: (event: MediaAttachedEvent) => void;
   [Events.MEDIA_DETACHING]: (event: MediaDetachingEvent) => void;
