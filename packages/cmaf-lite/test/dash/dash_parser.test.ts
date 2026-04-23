@@ -8,13 +8,13 @@ describe("DashParser", () => {
   const sourceUrl = "https://cdn.test/manifest.mpd";
 
   it("parses a basic MPD into a manifest with correct duration", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     expect(manifest.duration).toBe(60);
     expect(manifest.switchingSets).toHaveLength(2);
   });
 
   it("extracts a video switching set with the declared codec", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const video = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.VIDEO,
     );
@@ -24,7 +24,7 @@ describe("DashParser", () => {
   });
 
   it("extracts an audio switching set with the declared codec", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const audio = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.AUDIO,
     );
@@ -34,7 +34,7 @@ describe("DashParser", () => {
   });
 
   it("resolves video track dimensions from representations", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const video = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.VIDEO,
     )!;
@@ -49,7 +49,7 @@ describe("DashParser", () => {
   });
 
   it("generates segments with URLs derived from the SegmentTemplate", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const video = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.VIDEO,
     )!;
@@ -63,7 +63,7 @@ describe("DashParser", () => {
   });
 
   it("generates the correct number of segments for the presentation duration", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const video = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.VIDEO,
     )!;
@@ -74,7 +74,7 @@ describe("DashParser", () => {
 
   it("flattens multi-period MPD into a single manifest with concatenated segments", () => {
     const manifest = DashParser.create(
-      loadFixture("multi-period.mpd"),
+      loadFixture("dash-parser/vod-multi-period.mpd"),
       sourceUrl,
     );
     expect(manifest.duration).toBe(60);
@@ -94,7 +94,7 @@ describe("DashParser", () => {
 
   it("concatenates segments from multiple periods in timeline order", () => {
     const manifest = DashParser.create(
-      loadFixture("multi-period.mpd"),
+      loadFixture("dash-parser/vod-multi-period.mpd"),
       sourceUrl,
     );
     const video = manifest.switchingSets.find(
@@ -109,7 +109,7 @@ describe("DashParser", () => {
 
   it("infers media type from mimeType when contentType is absent", () => {
     const manifest = DashParser.create(
-      loadFixture("mimetype-fallback.mpd"),
+      loadFixture("dash-parser/vod-mimetype-fallback.mpd"),
       sourceUrl,
     );
     expect(manifest.switchingSets).toHaveLength(2);
@@ -124,7 +124,7 @@ describe("DashParser", () => {
   });
 
   it("computes maxSegmentDuration on each track", () => {
-    const result = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const result = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     for (const ss of result.switchingSets) {
       for (const track of ss.tracks) {
         expect(track.maxSegmentDuration).toBe(4);
@@ -141,7 +141,7 @@ describe("DashParser", () => {
   });
 
   it("parses a subtitle AdaptationSet into a subtitle switching set with language", () => {
-    const manifest = DashParser.create(loadFixture("subtitle.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-subtitle.mpd"), sourceUrl);
     const subtitle = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.SUBTITLE,
     );
@@ -155,7 +155,7 @@ describe("DashParser", () => {
   });
 
   it("builds subtitle track segments from the SegmentTemplate", () => {
-    const manifest = DashParser.create(loadFixture("subtitle.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-subtitle.mpd"), sourceUrl);
     const subtitle = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.SUBTITLE,
     )!;
@@ -167,7 +167,7 @@ describe("DashParser", () => {
 
   it("concatenates audio segments across periods into a single track", () => {
     const manifest = DashParser.create(
-      loadFixture("multi-period.mpd"),
+      loadFixture("dash-parser/vod-multi-period.mpd"),
       sourceUrl,
     );
     const audio = manifest.switchingSets.find(
@@ -183,7 +183,7 @@ describe("DashParser", () => {
   });
 
   it("assigns SwitchingSet.id as type:codec for video and type:codec:language for audio", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const video = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.VIDEO,
     )!;
@@ -195,7 +195,7 @@ describe("DashParser", () => {
   });
 
   it("assigns Track.id from Representation@id", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     const video = manifest.switchingSets.find(
       (ss) => ss.type === MediaType.VIDEO,
     )!;
@@ -204,7 +204,7 @@ describe("DashParser", () => {
   });
 
   it("sets isLive to false for a static MPD", () => {
-    const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+    const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
     expect(manifest.isLive).toBe(false);
   });
 
@@ -227,7 +227,7 @@ describe("DashParser.update", () => {
   const sourceUrl = "https://cdn.test/manifest.mpd";
 
   it("preserves manifest, switching set, track, and segment references when applied twice to the same MPD", () => {
-    const text = loadFixture("basic.mpd");
+    const text = loadFixture("dash-parser/vod-basic.mpd");
     const manifest = DashParser.create(text, sourceUrl);
 
     const switchingSetsRef = manifest.switchingSets;
@@ -250,7 +250,7 @@ describe("DashParser.update", () => {
   });
 
   it("extends an existing track's segments when a second MPD adds tail segments", () => {
-    const sourceText = loadFixture("timeline.mpd");
+    const sourceText = loadFixture("dash-parser/vod-timeline.mpd");
     const manifest = DashParser.create(sourceText, sourceUrl);
 
     const video = manifest.switchingSets.find(
@@ -281,7 +281,7 @@ describe("DashParser.update", () => {
   describe("update — live reconciliation", () => {
     it("appends new tail segments and prunes expired head segments", () => {
       const manifest = DashParser.create(
-        loadFixture("live-timeline-1.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
       const track = manifest.switchingSets[0]?.tracks[0];
@@ -290,7 +290,7 @@ describe("DashParser.update", () => {
 
       DashParser.update(
         manifest,
-        loadFixture("live-timeline-2.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-2.mpd"),
         sourceUrl,
       );
 
@@ -300,7 +300,7 @@ describe("DashParser.update", () => {
 
     it("preserves object identity for overlapping segments across an update", () => {
       const manifest = DashParser.create(
-        loadFixture("live-timeline-1.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
       const track = manifest.switchingSets[0]?.tracks[0];
@@ -316,7 +316,7 @@ describe("DashParser.update", () => {
 
       DashParser.update(
         manifest,
-        loadFixture("live-timeline-2.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-2.mpd"),
         sourceUrl,
       );
 
@@ -328,7 +328,7 @@ describe("DashParser.update", () => {
 
     it("preserves Track and SwitchingSet identity across an update", () => {
       const manifest = DashParser.create(
-        loadFixture("live-timeline-1.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
       const switchingSet = manifest.switchingSets[0];
@@ -339,7 +339,7 @@ describe("DashParser.update", () => {
 
       DashParser.update(
         manifest,
-        loadFixture("live-timeline-2.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-2.mpd"),
         sourceUrl,
       );
 
@@ -349,7 +349,7 @@ describe("DashParser.update", () => {
     });
 
     it("preserves references for every segment across a multi-period update", () => {
-      const text = loadFixture("multi-period.mpd");
+      const text = loadFixture("dash-parser/vod-multi-period.mpd");
       const manifest = DashParser.create(text, sourceUrl);
 
       const switchingSetsRef = manifest.switchingSets;
@@ -400,7 +400,7 @@ describe("DashParser.update", () => {
       // Edge case flagged in Task 7 review: first <S> in the updated MPD
       // has t != 0 (timeline-2 starts at t=8000 ms → start=8s).
       const manifest = DashParser.create(
-        loadFixture("live-timeline-1.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-1.mpd"),
         sourceUrl,
       );
       const track = manifest.switchingSets[0]?.tracks[0];
@@ -408,7 +408,7 @@ describe("DashParser.update", () => {
 
       DashParser.update(
         manifest,
-        loadFixture("live-timeline-2.mpd"),
+        loadFixture("dash-parser/live-timeline-sliding-2.mpd"),
         sourceUrl,
       );
 

@@ -11,7 +11,7 @@ const sourceUrl = "https://cdn.test/manifest.mpd";
 describe("DashSegments", () => {
   describe("duration-based segments", () => {
     it("generates segments that cover the full presentation duration", () => {
-      const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
       const video = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!;
@@ -20,7 +20,7 @@ describe("DashSegments", () => {
     });
 
     it("produces contiguous segments with no gaps between them", () => {
-      const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
       const segments = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!.tracks[0]!.segments;
@@ -31,7 +31,7 @@ describe("DashSegments", () => {
     });
 
     it("attaches an init segment to every media segment", () => {
-      const manifest = DashParser.create(loadFixture("basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
       const segments = manifest.switchingSets.find(
         (ss) => ss.type === MediaType.VIDEO,
       )!.tracks[0]!.segments;
@@ -46,7 +46,7 @@ describe("DashSegments", () => {
   describe("SegmentTemplate inheritance", () => {
     it("merges SegmentTemplate attributes from period, adaptation set, and representation levels", () => {
       const manifest = DashParser.create(
-        loadFixture("inherited-template.mpd"),
+        loadFixture("dash-parser/vod-inherited-template.mpd"),
         sourceUrl,
       );
       const video = manifest.switchingSets.find(
@@ -63,7 +63,7 @@ describe("DashSegments", () => {
   describe("timeline-based segments", () => {
     it("generates the correct number of segments from SegmentTimeline with repeat count", () => {
       const manifest = DashParser.create(
-        loadFixture("timeline.mpd"),
+        loadFixture("dash-parser/vod-timeline.mpd"),
         sourceUrl,
       );
       const segments = manifest.switchingSets.find(
@@ -76,7 +76,7 @@ describe("DashSegments", () => {
 
     it("calculates correct start and end times from timeline entries", () => {
       const manifest = DashParser.create(
-        loadFixture("timeline.mpd"),
+        loadFixture("dash-parser/vod-timeline.mpd"),
         sourceUrl,
       );
       const segments = manifest.switchingSets.find(
@@ -93,7 +93,7 @@ describe("DashSegments", () => {
   describe("timeline with time reset", () => {
     it("resets segment time when S entry has explicit @_t attribute", () => {
       const manifest = DashParser.create(
-        loadFixture("timeline-reset.mpd"),
+        loadFixture("dash-parser/vod-timeline-reset.mpd"),
         sourceUrl,
       );
       const video = manifest.switchingSets.find(
@@ -118,7 +118,7 @@ describe("DashSegments", () => {
       // timeline.mpd: <S t="0" d="360000" r="2"/> with timescale=90000 → 3 segments
       //   at start = 0, 4, 8
       const segments: Segment[] = [];
-      const mpd = XmlUtils.parseXml(loadFixture("timeline.mpd"), "MPD");
+      const mpd = XmlUtils.parseXml(loadFixture("dash-parser/vod-timeline.mpd"), "MPD");
       const period = XmlUtils.child(mpd, "Period");
       asserts.assertExists(period, "Period not found");
       const adaptationSet = XmlUtils.child(period, "AdaptationSet");
@@ -144,7 +144,7 @@ describe("DashSegments", () => {
 
     it("skips segments at or below startAfter and emits only newer ones", () => {
       const segments: Segment[] = [];
-      const mpd = XmlUtils.parseXml(loadFixture("timeline.mpd"), "MPD");
+      const mpd = XmlUtils.parseXml(loadFixture("dash-parser/vod-timeline.mpd"), "MPD");
       const period = XmlUtils.child(mpd, "Period");
       asserts.assertExists(period, "Period not found");
       const adaptationSet = XmlUtils.child(period, "AdaptationSet");
@@ -175,7 +175,7 @@ describe("DashSegments", () => {
       // decide whether to (re)fetch the init segment. A fresh object per
       // manifest refresh makes it refetch every cycle for the same URL.
       const segments: Segment[] = [];
-      const mpd = XmlUtils.parseXml(loadFixture("timeline.mpd"), "MPD");
+      const mpd = XmlUtils.parseXml(loadFixture("dash-parser/vod-timeline.mpd"), "MPD");
       const period = XmlUtils.child(mpd, "Period");
       asserts.assertExists(period, "Period not found");
       const adaptationSet = XmlUtils.child(period, "AdaptationSet");
