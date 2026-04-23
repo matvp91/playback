@@ -10,27 +10,39 @@ describe("DashParser", () => {
 
   describe("structure", () => {
     it("parses a basic MPD into a manifest with correct duration", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       expect(manifest.duration).toBe(60);
       expect(manifest.switchingSets).toHaveLength(2);
     });
 
     it("extracts a video switching set with the declared codec", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const video = findVideo(manifest);
       expect(video.codec).toBe("avc1.64001f");
       expect(video.tracks).toHaveLength(2);
     });
 
     it("extracts an audio switching set with the declared codec", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const audio = findAudio(manifest);
       expect(audio.codec).toBe("mp4a.40.2");
       expect(audio.tracks).toHaveLength(1);
     });
 
     it("resolves video track dimensions from representations", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const video = findVideo(manifest);
       const track1080 = video.tracks.find(
         (t) => t.type === MediaType.VIDEO && t.height === 1080,
@@ -53,7 +65,10 @@ describe("DashParser", () => {
     });
 
     it("computes maxSegmentDuration on each track", () => {
-      const result = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const result = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       for (const ss of result.switchingSets) {
         for (const track of ss.tracks) {
           expect(track.maxSegmentDuration).toBe(4);
@@ -62,7 +77,10 @@ describe("DashParser", () => {
     });
 
     it("parses a subtitle AdaptationSet into a subtitle switching set with language", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-subtitle.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-subtitle.mpd"),
+        sourceUrl,
+      );
       const subtitle = findSubtitle(manifest);
       expect(subtitle.codec).toBe("wvtt");
       expect(subtitle.type).toBe(MediaType.SUBTITLE);
@@ -71,7 +89,10 @@ describe("DashParser", () => {
     });
 
     it("assigns SwitchingSet.id as type:codec for video and type:codec:language for audio", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const video = findVideo(manifest);
       const audio = findAudio(manifest);
       expect(video.id).toBe("video:avc1.64001f");
@@ -79,14 +100,20 @@ describe("DashParser", () => {
     });
 
     it("assigns Track.id from Representation@id", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const video = findVideo(manifest);
       const ids = video.tracks.map((t) => t.id).sort();
       expect(ids).toEqual(["1", "2"]);
     });
 
     it("sets isLive to false for a static MPD", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       expect(manifest.isLive).toBe(false);
     });
 
@@ -134,7 +161,10 @@ describe("DashParser", () => {
 
   describe("segments", () => {
     it("generates segments with URLs derived from the SegmentTemplate", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const video = findVideo(manifest);
       const track = video.tracks[0]!;
       expect(track.segments.length).toBeGreaterThan(0);
@@ -146,7 +176,10 @@ describe("DashParser", () => {
     });
 
     it("generates the correct number of segments for the presentation duration", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
       const video = findVideo(manifest);
       const track = video.tracks[0]!;
       // 60s duration / 4s segments = 15 segments
@@ -185,7 +218,10 @@ describe("DashParser", () => {
     });
 
     it("builds subtitle track segments from the SegmentTemplate", () => {
-      const manifest = DashParser.create(loadFixture("dash-parser/vod-subtitle.mpd"), sourceUrl);
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-subtitle.mpd"),
+        sourceUrl,
+      );
       const subtitle = findSubtitle(manifest);
       const track = subtitle.tracks[0]!;
       expect(track.segments.length).toBeGreaterThan(0);
@@ -430,7 +466,10 @@ describe("DashParser", () => {
   describe("errors", () => {
     it("throws when MPD contains no Period elements", () => {
       expect(() =>
-        DashParser.create(loadFixture("dash-parser/vod-no-periods.mpd"), sourceUrl),
+        DashParser.create(
+          loadFixture("dash-parser/vod-no-periods.mpd"),
+          sourceUrl,
+        ),
       ).toThrow();
     });
 
@@ -552,11 +591,7 @@ describe("DashParser", () => {
       );
       const track = manifest.switchingSets[0]?.tracks[0];
       asserts.assertExists(track, "track not found");
-      const kept = [
-        track.segments[2],
-        track.segments[3],
-        track.segments[4],
-      ];
+      const kept = [track.segments[2], track.segments[3], track.segments[4]];
       asserts.assertExists(kept[0], "kept[0]");
       asserts.assertExists(kept[1], "kept[1]");
       asserts.assertExists(kept[2], "kept[2]");
