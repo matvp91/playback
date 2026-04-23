@@ -2,7 +2,6 @@ import type {
   AdaptationEvent,
   BufferFlushedEvent,
   ManifestCreatedEvent,
-  ManifestUpdatedEvent,
   MediaAttachedEvent,
 } from "../events";
 import { Events } from "../events";
@@ -42,7 +41,6 @@ export class StreamController {
 
   constructor(private player_: Player) {
     this.player_.on(Events.MANIFEST_CREATED, this.onManifestCreated_);
-    this.player_.on(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -72,7 +70,6 @@ export class StreamController {
       mediaState.timer.stop();
     }
     this.player_.off(Events.MANIFEST_CREATED, this.onManifestCreated_);
-    this.player_.off(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -86,11 +83,6 @@ export class StreamController {
     log.info("Streams", this.streamsMap_);
     this.player_.emit(Events.STREAMS_UPDATED);
     this.tryStart_();
-  };
-
-  private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
-    this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
-    this.player_.emit(Events.STREAMS_UPDATED);
   };
 
   private onMediaAttached_ = (event: MediaAttachedEvent) => {
@@ -244,10 +236,8 @@ export class StreamController {
 
     if (this.isLive_ && this.media_) {
       const videoStream = this.streams_.get(MediaType.VIDEO);
-      const referenceStream =
-        videoStream ?? this.streams_.values().next().value;
-      if (referenceStream) {
-        this.media_.currentTime = this.getInitialTime_(referenceStream);
+      if (videoStream) {
+        this.media_.currentTime = this.getInitialTime_(videoStream);
       }
     }
 
