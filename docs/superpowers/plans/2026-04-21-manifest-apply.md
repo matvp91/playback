@@ -35,7 +35,7 @@ dash_parser → dash_periods → dash_adaptations
 
 ## Task 1: Segments layer rewrite
 
-Rewrite `dash_segments.ts` to expose `appendSegments` instead of `parseSegmentData`. Inline both template-addressing branches (SegmentTimeline and `@duration`) so each pushes directly into `target` — no intermediate collection. Absorb `resolveBaseUrl` from `dash_periods.ts`. Temporarily adapt the single callsite in `dash_periods.ts`; structural changes to periods land in later tasks.
+Rewrite `dash_segments.ts` to expose `appendSegments` instead of `parseSegmentData`. `appendSegments` owns the shared template-attribute extraction, then priority-dispatches to `appendSegmentsFromTimeline` (if a `SegmentTimeline` is present) or `appendSegmentsFromDuration` (falling back to `@duration`). Both helpers push `Segment` objects directly into `target` — no intermediate collection. Absorb `resolveBaseUrl` from `dash_periods.ts`. Temporarily adapt the single callsite in `dash_periods.ts`; structural changes to periods land in later tasks.
 
 **Files:**
 - Modify: `packages/cmaf-lite/lib/dash/dash_segments.ts`
@@ -104,53 +104,110 @@ export function appendSegments(
     ),
   };
 
-  let maxSegmentDuration = 0;
-
   const timeline = XmlUtils.child(st, "SegmentTimeline");
   if (timeline) {
-    let time = 0;
-    let number = startNumber;
-    for (const s of XmlUtils.children(timeline, "S")) {
-      const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
-      asserts.assertExists(duration, "segment duration is mandatory");
-      const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
-      time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
-      for (let i = 0; i <= r; i++) {
-        const url = UrlUtils.resolveUrl(
-          processUriTemplate(media, id, number, null, bandwidth, time),
-          baseUrl,
-        );
-        const start = (time - pto) / timescale + periodStart;
-        const end = (time - pto + duration) / timescale + periodStart;
-        target.push({ url, start, end, initSegment });
-        maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
-        time += duration;
-        number++;
-      }
-    }
-    return maxSegmentDuration;
+    return appendSegmentsFromTimeline(
+      target,
+      timeline,
+      media,
+      id,
+      bandwidth,
+      baseUrl,
+      timescale,
+      startNumber,
+      pto,
+      periodStart,
+      initSegment,
+    );
   }
 
-  const duration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
+  const templateDuration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
   asserts.assertExists(
-    duration,
+    templateDuration,
     "SegmentTemplate requires either SegmentTimeline or @duration",
   );
   asserts.assertExists(
     periodDuration,
     "Duration-based addressing requires a resolvable period duration",
   );
+  return appendSegmentsFromDuration(
+    target,
+    templateDuration,
+    periodDuration,
+    media,
+    id,
+    bandwidth,
+    baseUrl,
+    timescale,
+    startNumber,
+    pto,
+    periodStart,
+    initSegment,
+  );
+}
 
-  const count = Math.ceil(periodDuration / (duration / timescale));
+function appendSegmentsFromTimeline(
+  target: Segment[],
+  timeline: txml.TNode,
+  media: string,
+  id: string | undefined,
+  bandwidth: number,
+  baseUrl: string,
+  timescale: number,
+  startNumber: number,
+  pto: number,
+  periodStart: number,
+  initSegment: InitSegment,
+): number {
+  let maxSegmentDuration = 0;
+  let time = 0;
+  let number = startNumber;
+  for (const s of XmlUtils.children(timeline, "S")) {
+    const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
+    asserts.assertExists(duration, "segment duration is mandatory");
+    const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
+    time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
+    for (let i = 0; i <= r; i++) {
+      const url = UrlUtils.resolveUrl(
+        processUriTemplate(media, id, number, null, bandwidth, time),
+        baseUrl,
+      );
+      const start = (time - pto) / timescale + periodStart;
+      const end = (time - pto + duration) / timescale + periodStart;
+      target.push({ url, start, end, initSegment });
+      maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
+      time += duration;
+      number++;
+    }
+  }
+  return maxSegmentDuration;
+}
+
+function appendSegmentsFromDuration(
+  target: Segment[],
+  templateDuration: number,
+  periodDuration: number,
+  media: string,
+  id: string | undefined,
+  bandwidth: number,
+  baseUrl: string,
+  timescale: number,
+  startNumber: number,
+  pto: number,
+  periodStart: number,
+  initSegment: InitSegment,
+): number {
+  let maxSegmentDuration = 0;
+  const count = Math.ceil(periodDuration / (templateDuration / timescale));
   for (let i = 0; i < count; i++) {
     const number = startNumber + i;
-    const time = i * duration;
+    const time = i * templateDuration;
     const url = UrlUtils.resolveUrl(
       processUriTemplate(media, id, number, null, bandwidth, time),
       baseUrl,
     );
     const start = (time - pto) / timescale + periodStart;
-    const end = (time - pto + duration) / timescale + periodStart;
+    const end = (time - pto + templateDuration) / timescale + periodStart;
     target.push({ url, start, end, initSegment });
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
@@ -316,12 +373,13 @@ Expected: no diagnostics, no file rewrites.
 
 ```bash
 git add packages/cmaf-lite/lib/dash/dash_segments.ts packages/cmaf-lite/lib/dash/dash_periods.ts
-git commit -m "refactor(dash): appendSegments pushes directly into target
+git commit -m "refactor(dash): appendSegments with priority-dispatched helpers
 
 Replace parseSegmentData with appendSegments that pushes segments into
-a caller-provided target and returns maxSegmentDuration. Inline both
-template-addressing branches (SegmentTimeline, @duration) — no
-intermediate collection. Move resolveBaseUrl into dash_segments.ts.
+a caller-provided target and returns maxSegmentDuration. Extract
+shared template config in appendSegments, then priority-dispatch to
+appendSegmentsFromTimeline or appendSegmentsFromDuration — each pushes
+directly into target. Move resolveBaseUrl into dash_segments.ts.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -1130,7 +1188,7 @@ Expected: clean across all packages.
 - `applyPeriods` over a context → Task 3.
 - `upsertSwitchingSet` / `upsertTrack` → Task 3.
 - `buildTrack` skeleton-only → Task 2.
-- `appendSegments` with inlined timeline + duration branches pushing into `target` → Task 1.
+- `appendSegments` with priority-dispatched `appendSegmentsFromTimeline` / `appendSegmentsFromDuration` helpers pushing into `target` → Task 1.
 - Bandwidth / baseUrl extraction pushed down into `appendSegments` → Task 1.
 - `resolveBaseUrl` moved to `dash_segments.ts` → Task 1.
 - File layout split (`dash_adaptations.ts` new) → Task 2.
