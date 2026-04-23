@@ -232,6 +232,18 @@ describe("DashParser", () => {
       expect(extra.segments[0]!.start).toBeGreaterThanOrEqual(30);
     });
 
+    it("continues segment numbering across periods via @startNumber", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-multi-period-startnumber.mpd"),
+        sourceUrl,
+      );
+      const segments = findVideo(manifest).tracks[0]!.segments;
+      // Period 1 starts at number 1 ("v-1.m4s"); Period 2 starts at number 8.
+      const p2First = segments.find((s) => s.start >= 30);
+      expect(p2First).toBeDefined();
+      expect(p2First!.url).toContain("v-8.m4s");
+    });
+
     it("last segment covers the full presentation duration", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-basic.mpd"),
