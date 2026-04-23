@@ -1,12 +1,6 @@
 import { processUriTemplate } from "@svta/cml-dash";
 import type * as txml from "txml";
-import type {
-  InitSegment,
-  Manifest,
-  Segment,
-  SwitchingSet,
-  Track,
-} from "../types/manifest";
+import type { Manifest, Segment, SwitchingSet, Track } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
