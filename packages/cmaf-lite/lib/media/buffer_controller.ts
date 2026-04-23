@@ -8,7 +8,7 @@ import type {
 } from "../events";
 import { Events } from "../events";
 import type { Player } from "../player";
-import type { InitSegment, Manifest, Segment } from "../types/manifest";
+import type { InitSegment, Segment } from "../types/manifest";
 import type { SourceBufferMediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as CodecUtils from "../utils/codec_utils";
@@ -32,7 +32,7 @@ export class BufferController {
   private initSegmentInfo_ = new Map<InitSegment, InitSegmentInfo>();
   private segmentTracker_ = new SegmentTracker();
   private quotaEvictionPending_ = new Set<SourceBufferMediaType>();
-  private manifest_: Manifest | null = null;
+  private duration_: number | null = null;
   private objectUrl_: string | null = null;
 
   constructor(private player_: Player) {
@@ -71,7 +71,7 @@ export class BufferController {
       this.objectUrl_ = null;
     }
     this.mediaSource_ = null;
-    this.manifest_ = null;
+    this.duration_ = null;
   }
 
   getBuffered(type: SourceBufferMediaType): TimeRanges | null {
@@ -86,7 +86,9 @@ export class BufferController {
   };
 
   private onManifestCreated_ = (event: ManifestCreatedEvent) => {
-    this.manifest_ = event.manifest;
+    this.duration_ = event.manifest.isLive
+      ? Number.POSITIVE_INFINITY
+      : event.manifest.duration;
     this.updateDuration_();
   };
 
@@ -274,10 +276,10 @@ export class BufferController {
    * SourceBuffer is updating.
    */
   private updateDuration_() {
-    if (!this.manifest_ || this.mediaSource_?.readyState !== "open") {
+    if (this.duration_ === null || this.mediaSource_?.readyState !== "open") {
       return;
     }
-    const duration = this.manifest_.duration;
+    const duration = this.duration_;
     if (this.mediaSource_.duration === duration) {
       return;
     }
