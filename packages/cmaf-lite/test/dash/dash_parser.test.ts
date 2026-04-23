@@ -97,6 +97,14 @@ describe("DashParser", () => {
       );
       expect(manifest.isLive).toBe(true);
     });
+
+    it("falls back to AdaptationSet codecs when Representation omits it", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-codec-on-adaptation-set.mpd"),
+        sourceUrl,
+      );
+      expect(findVideo(manifest).codec).toBe("avc1.64001f");
+    });
   });
 
   describe("segments", () => {
