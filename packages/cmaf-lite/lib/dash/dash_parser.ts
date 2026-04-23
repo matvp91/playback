@@ -132,7 +132,17 @@ function readRepresentation(
     startAfter,
   );
   if (ctx.isUpdate) {
-    ManifestUtils.pruneSegments(track.segments, firstAvailableStart);
+    const periodStart = XmlUtils.attr(
+      period,
+      "start",
+      XmlUtils.parseDuration,
+      0,
+    );
+    ManifestUtils.pruneSegments(
+      track.segments,
+      periodStart,
+      firstAvailableStart,
+    );
   }
   track.maxSegmentDuration = Math.max(
     track.maxSegmentDuration,

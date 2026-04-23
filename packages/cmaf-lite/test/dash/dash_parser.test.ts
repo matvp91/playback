@@ -533,13 +533,7 @@ describe("DashParser", () => {
       expect(track.segments[originalCount - 1]).toBe(originalLast);
     });
 
-    // SKIPPED: multi-period update currently wipes every Period 1 segment
-    // because Period 2's firstAvailableStart (the period's own start time) is
-    // fed through pruneSegments, which truncates the entire array below it.
-    // Fix tracked in a follow-up brainstorm. When fixed, flip `it.skip` to
-    // `it`.
-    // See: docs/superpowers/specs/2026-04-23-dash-parser-test-consolidation-design.md
-    it.skip("preserves references for every segment across a multi-period update", () => {
+    it("preserves references for every segment across a multi-period update", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/live-multi-period-timeline-1.mpd"),
         sourceUrl,
