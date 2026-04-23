@@ -114,3 +114,83 @@ These should land before live work begins, independently useful today:
 - Transient 5xx refresh failures retry with exponential backoff; repeated
   failure emits a `ManifestError` event without stopping playback while
   the current buffer is still playable.
+
+---
+
+## 2. Spec-faithful AdaptationSet / Representation identity
+
+**Status:** Not started.
+
+### Goal
+
+Align SwitchingSet and Track identity derivation with MPEG-DASH
+(ISO/IEC 23009-1) and CMAF (ISO/IEC 23000-19) semantics. Current
+identity keys (`type:codec[:lang]` for SwitchingSet,
+`Representation@id` for Track) are pragmatic heuristics that
+over-merge and under-merge in predictable ways.
+
+### Current gaps
+
+- **`AdaptationSet@id` ignored.** When authors supply stable IDs
+  across Periods, we derive our own composite key instead.
+- **Video over-merges on codec.** Two video AdaptationSets with the
+  same codec but different roles, aspect ratios, or HDR/SDR
+  characteristics collapse into one SwitchingSet.
+- **Audio over-merges on codec+lang.** Main / commentary /
+  audio-description tracks with the same language and codec collapse.
+  Role descriptor is the canonical disambiguator; we don't read it.
+- **No `Role` descriptor awareness**
+  (`urn:mpeg:dash:role:2011`) — `main`, `alternate`, `commentary`,
+  `dub`, `description`, `caption`, etc.
+- **No period-continuity signals** — DASH
+  (`urn:mpeg:dash:period-continuity:2015`,
+  `urn:mpeg:dash:period-switchable:2014`) tell the player which
+  Representations across Periods are continuous. We infer from
+  `Representation@id` stability, which the spec does not guarantee.
+- **No `@par` (picture aspect ratio) or resolution-family
+  awareness** — affects CMAF switching-set compatibility.
+
+### Approach
+
+- Prefer authored `AdaptationSet@id` as the SwitchingSet key when
+  present; fall back to a composite key only when absent.
+- Incorporate `Role` descriptor into the composite key. Audio +
+  commentary vs. audio + main should be distinct SwitchingSets.
+- Respect period-continuity / period-switchable descriptors for
+  cross-Period track matching; do not silently extend segments onto a
+  track that wasn't signaled continuous.
+- Extend the composite key for video to include aspect ratio and
+  HDR/SDR signaling where present.
+- Keep Track identity as `Representation@id` scoped to its
+  SwitchingSet; continuity descriptors, not pattern-matching, resolve
+  cross-Period cases.
+
+### Prerequisites
+
+- Manifest apply restructure (item 1 prerequisite) — identity logic
+  is orthogonal to the plumbing but easier to change once the upsert
+  helpers are the single place identity flows through.
+
+### Out of scope
+
+- CMAF init-segment compatibility verification (decoding
+  `ftyp`/`moov` to confirm switching-set constraints) — a deeper
+  analysis pass belongs behind this, if needed.
+- Fingerprint-based Representation identity (comparing init segments
+  across Periods when `@id` is unstable and no continuity descriptor
+  is present) — defer unless a real manifest demands it.
+
+### Acceptance criteria
+
+- A manifest with main + commentary audio at the same codec and
+  language produces two SwitchingSets.
+- A manifest with SDR and HDR video at the same codec produces two
+  SwitchingSets.
+- A manifest using `period-continuity:2015` matches Representations
+  across Periods even when `@id` differs.
+- A manifest without continuity descriptors and with distinct
+  `Representation@id` values across Periods produces separate
+  SwitchingSets per Period (no silent merge).
+- Existing test fixtures continue to produce the same SwitchingSet /
+  Track shapes (the current heuristics happen to align with spec for
+  well-formed simple manifests).
