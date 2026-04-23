@@ -6,6 +6,11 @@ import * as Functional from "../utils/functional";
 import * as LanguageUtils from "../utils/language_utils";
 import * as XmlUtils from "../utils/xml_utils";
 
+/**
+ * Transient upsert index for a single `applyMpd` call. `sets` aliases
+ * `manifest.switchingSets` — pushing through the context mutates the
+ * manifest in place, which is what preserves identity across updates.
+ */
 export type ApplyContext = {
   sets: SwitchingSet[];
   switchingSetsById: Map<string, SwitchingSet>;
