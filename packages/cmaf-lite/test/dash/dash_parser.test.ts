@@ -290,26 +290,22 @@ describe("DashParser", () => {
       expect(firstTrack.segments.length).toBe(segmentCount);
     });
 
-    it("extends an existing track's segments when a second MPD adds tail segments", () => {
-      const sourceText = loadFixture("dash-parser/vod-timeline.mpd");
-      const manifest = DashParser.create(sourceText, sourceUrl);
-
-      const video = findVideo(manifest);
-      const track = video.tracks[0]!;
+    it("extends an existing track's segments when a new snapshot adds tail segments", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/live-timeline-growing-1.mpd"),
+        sourceUrl,
+      );
+      const track = findVideo(manifest).tracks[0]!;
       const originalSegments = track.segments;
       const originalCount = originalSegments.length;
       const originalFirst = originalSegments[0]!;
       const originalLast = originalSegments.at(-1)!;
 
-      const extendedText = sourceText.replace(
-        /<S t="0" d="360000" r="\d+" \/>/,
-        (match) => {
-          const rMatch = /r="(\d+)"/.exec(match);
-          const nextR = rMatch ? Number(rMatch[1]) + 5 : 5;
-          return `<S t="0" d="360000" r="${nextR}" />`;
-        },
+      DashParser.update(
+        manifest,
+        loadFixture("dash-parser/live-timeline-growing-2.mpd"),
+        sourceUrl,
       );
-      DashParser.update(manifest, extendedText, sourceUrl);
 
       expect(track.segments).toBe(originalSegments);
       expect(track.segments.length).toBeGreaterThan(originalCount);
