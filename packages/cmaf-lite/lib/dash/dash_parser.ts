@@ -377,13 +377,20 @@ function appendSegments(
   }
 
   let maxSegmentDuration = 0;
-  let firstAvailableStart = Number.POSITIVE_INFINITY;
 
   const timeline = XmlUtils.child(segmentTemplate, "SegmentTimeline");
   if (timeline) {
+    const entries = XmlUtils.children(timeline, "S");
+    const firstT = entries[0]
+      ? XmlUtils.attr(entries[0], "t", XmlUtils.parseNumber, 0)
+      : 0;
+    const firstAvailableStart = entries[0]
+      ? (firstT - presentationTimeOffset) / timescale + periodStart
+      : periodStart;
+
     let time = 0;
     let number = startNumber;
-    for (const timelineEntry of XmlUtils.children(timeline, "S")) {
+    for (const timelineEntry of entries) {
       const duration = XmlUtils.attrRequired(
         timelineEntry,
         "d",
@@ -391,11 +398,6 @@ function appendSegments(
       );
       const repeat = XmlUtils.attr(timelineEntry, "r", XmlUtils.parseNumber, 0);
       time = XmlUtils.attr(timelineEntry, "t", XmlUtils.parseNumber, time);
-
-      if (firstAvailableStart === Number.POSITIVE_INFINITY) {
-        firstAvailableStart =
-          (time - presentationTimeOffset) / timescale + periodStart;
-      }
 
       for (let i = 0; i <= repeat; i++) {
         const start = (time - presentationTimeOffset) / timescale + periodStart;
@@ -426,9 +428,6 @@ function appendSegments(
       }
     }
 
-    if (firstAvailableStart === Number.POSITIVE_INFINITY) {
-      firstAvailableStart = periodStart;
-    }
     return { maxSegmentDuration, firstAvailableStart };
   }
 
@@ -443,6 +442,9 @@ function appendSegments(
     XmlUtils.parseNumber,
   );
 
+  const firstAvailableStart =
+    (0 - presentationTimeOffset) / timescale + periodStart;
+
   const count = Math.ceil(periodDuration / (duration / timescale));
   for (let i = 0; i < count; i++) {
     const number = startNumber + i;
@@ -450,10 +452,6 @@ function appendSegments(
     const start = (time - presentationTimeOffset) / timescale + periodStart;
     const end =
       (time - presentationTimeOffset + duration) / timescale + periodStart;
-
-    if (i === 0) {
-      firstAvailableStart = start;
-    }
 
     if (start <= startAfter) {
       continue;
@@ -472,8 +470,5 @@ function appendSegments(
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
 
-  if (firstAvailableStart === Number.POSITIVE_INFINITY) {
-    firstAvailableStart = periodStart;
-  }
   return { maxSegmentDuration, firstAvailableStart };
 }
