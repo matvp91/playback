@@ -30,13 +30,13 @@ type ReadContext = {
   sourceUrl: string;
 };
 
-export function parseManifest(text: string, sourceUrl: string): Manifest {
+export function create(text: string, sourceUrl: string): Manifest {
   const manifest: Manifest = { duration: 0, switchingSets: [] };
   readMpd(manifest, text, sourceUrl);
   return manifest;
 }
 
-export function updateManifest(
+export function update(
   manifest: Manifest,
   text: string,
   sourceUrl: string,
@@ -158,13 +158,12 @@ function upsertTrack(
   adaptationSet: txml.TNode,
   representation: txml.TNode,
 ): Track {
-  const trackId = XmlUtils.attr(representation, "id", XmlUtils.parseString);
-  asserts.assertExists(trackId, "Representation@id is mandatory");
-  const key = `${switchingSet.id}:${trackId}`;
+  const id = XmlUtils.attrRequired(representation, "id", XmlUtils.parseString);
+  const key = `${switchingSet.id}:${id}`;
   return ctx.tracksById.getOrInsertComputed(key, () => {
     const track = buildTrack(
       switchingSet.type,
-      trackId,
+      id,
       adaptationSet,
       representation,
     );
@@ -243,12 +242,11 @@ function buildTrack(
   adaptationSet: txml.TNode,
   representation: txml.TNode,
 ): Track {
-  const bandwidth = XmlUtils.attr(
+  const bandwidth = XmlUtils.attrRequired(
     representation,
     "bandwidth",
     XmlUtils.parseNumber,
   );
-  asserts.assertExists(bandwidth, "bandwidth is mandatory");
 
   if (type === MediaType.VIDEO) {
     const width = Functional.findMap([representation, adaptationSet], (node) =>
@@ -293,12 +291,11 @@ function appendSegments(
     adaptationSet,
     representation,
   );
-  const bandwidth = XmlUtils.attr(
+  const bandwidth = XmlUtils.attrRequired(
     representation,
     "bandwidth",
     XmlUtils.parseNumber,
   );
-  asserts.assertExists(bandwidth, "bandwidth is mandatory");
 
   const segmentTemplate = resolveSegmentTemplate(
     period,
@@ -306,34 +303,48 @@ function appendSegments(
     representation,
   );
 
-  const initialization = XmlUtils.attr(
+  const initialization = XmlUtils.attrRequired(
     segmentTemplate,
     "initialization",
     XmlUtils.parseString,
   );
-  asserts.assertExists(initialization, "initialization is mandatory");
-  const media = XmlUtils.attr(segmentTemplate, "media", XmlUtils.parseString);
-  asserts.assertExists(media, "media is mandatory");
+  const media = XmlUtils.attrRequired(
+    segmentTemplate,
+    "media",
+    XmlUtils.parseString,
+  );
+  const id = XmlUtils.attrRequired(representation, "id", XmlUtils.parseString);
 
-  const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
-  const timescale =
-    XmlUtils.attr(segmentTemplate, "timescale", XmlUtils.parseNumber) ?? 1;
-  const startNumber =
-    XmlUtils.attr(segmentTemplate, "startNumber", XmlUtils.parseNumber) ?? 1;
-  const presentationTimeOffset =
-    XmlUtils.attr(
-      segmentTemplate,
-      "presentationTimeOffset",
-      XmlUtils.parseNumber,
-    ) ?? 0;
-  const periodStart =
-    XmlUtils.attr(period, "start", XmlUtils.parseDuration) ?? 0;
+  const timescale = XmlUtils.attr(
+    segmentTemplate,
+    "timescale",
+    XmlUtils.parseNumber,
+    1,
+  );
+  const startNumber = XmlUtils.attr(
+    segmentTemplate,
+    "startNumber",
+    XmlUtils.parseNumber,
+    1,
+  );
+  const presentationTimeOffset = XmlUtils.attr(
+    segmentTemplate,
+    "presentationTimeOffset",
+    XmlUtils.parseNumber,
+    0,
+  );
+  const periodStart = XmlUtils.attr(period, "start", XmlUtils.parseDuration, 0);
 
+  const uri = processUriTemplate(
+    initialization,
+    id,
+    null,
+    null,
+    bandwidth,
+    null,
+  );
   const initSegment: InitSegment = {
-    url: UrlUtils.resolveUrl(
-      processUriTemplate(initialization, id, null, null, bandwidth, null),
-      baseUrl,
-    ),
+    url: UrlUtils.resolveUrl(uri, baseUrl),
   };
 
   let maxSegmentDuration = 0;
@@ -343,55 +354,63 @@ function appendSegments(
     let time = 0;
     let number = startNumber;
     for (const timelineEntry of XmlUtils.children(timeline, "S")) {
-      const duration = XmlUtils.attr(timelineEntry, "d", XmlUtils.parseNumber);
-      asserts.assertExists(duration, "segment duration is mandatory");
-      const repeat =
-        XmlUtils.attr(timelineEntry, "r", XmlUtils.parseNumber) ?? 0;
-      time = XmlUtils.attr(timelineEntry, "t", XmlUtils.parseNumber) ?? time;
+      const duration = XmlUtils.attrRequired(
+        timelineEntry,
+        "d",
+        XmlUtils.parseNumber,
+      );
+      const repeat = XmlUtils.attr(timelineEntry, "r", XmlUtils.parseNumber, 0);
+      time = XmlUtils.attr(timelineEntry, "t", XmlUtils.parseNumber, time);
+
       for (let i = 0; i <= repeat; i++) {
-        const url = UrlUtils.resolveUrl(
-          processUriTemplate(media, id, number, null, bandwidth, time),
-          baseUrl,
+        const uri = processUriTemplate(
+          media,
+          id,
+          number,
+          null,
+          bandwidth,
+          time,
         );
+
+        const url = UrlUtils.resolveUrl(uri, baseUrl);
         const start = (time - presentationTimeOffset) / timescale + periodStart;
         const end =
           (time - presentationTimeOffset + duration) / timescale + periodStart;
+
         target.push({ url, start, end, initSegment });
+
         maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
         time += duration;
         number++;
       }
     }
+
     return maxSegmentDuration;
   }
 
-  const duration = XmlUtils.attr(
-    segmentTemplate,
-    "duration",
-    XmlUtils.parseNumber,
-  );
-  asserts.assertExists(
-    duration,
-    "SegmentTemplate requires either SegmentTimeline or @duration",
-  );
   asserts.assertExists(
     periodDuration,
     "Duration-based addressing requires a resolvable period duration",
+  );
+
+  const duration = XmlUtils.attrRequired(
+    segmentTemplate,
+    "duration",
+    XmlUtils.parseNumber,
   );
 
   const count = Math.ceil(periodDuration / (duration / timescale));
   for (let i = 0; i < count; i++) {
     const number = startNumber + i;
     const time = i * duration;
-    const url = UrlUtils.resolveUrl(
-      processUriTemplate(media, id, number, null, bandwidth, time),
-      baseUrl,
-    );
+    const uri = processUriTemplate(media, id, number, null, bandwidth, time);
+    const url = UrlUtils.resolveUrl(uri, baseUrl);
     const start = (time - presentationTimeOffset) / timescale + periodStart;
     const end =
       (time - presentationTimeOffset + duration) / timescale + periodStart;
     target.push({ url, start, end, initSegment });
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
+
   return maxSegmentDuration;
 }

@@ -41,6 +41,19 @@ export function attr<T>(
   return defaultValue;
 }
 
+export function attrRequired<T>(
+  node: txml.TNode,
+  name: string,
+  parser: AttrParser<T>,
+): T {
+  const raw = node.attributes[name];
+  asserts.assertExists(
+    raw,
+    `Required attribute "${name}" missing on <${node.tagName}>`,
+  );
+  return parser(raw);
+}
+
 /**
  * Return the first child element with the given tagName, or undefined.
  */

@@ -1,4 +1,4 @@
-import { parseManifest } from "../dash/dash_parser";
+import * as DashParser from "../dash/dash_parser";
 import type { ManifestLoadingEvent } from "../events";
 import { Events } from "../events";
 import type { NetworkRequest } from "../net/network_request";
@@ -40,7 +40,7 @@ export class ManifestController {
     // TODO(matvp): We used to have a registry lookup but that complicated
     // things. We shall look at this again later. For now, always assume
     // that it's DASH.
-    const manifest = parseManifest(response.text, response.request.url);
+    const manifest = DashParser.create(response.text, response.request.url);
     log.info("Manifest", manifest);
     this.player_.emit(Events.MANIFEST_PARSED, { manifest });
   };
