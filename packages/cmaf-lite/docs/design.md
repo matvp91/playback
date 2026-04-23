@@ -121,9 +121,9 @@ player.attachMedia(videoEl)
 player.load(url)
   → MANIFEST_LOADING
   → ManifestController fetches + parses
-  → MANIFEST_PARSED
+  → MANIFEST_CREATED
 
-Both MEDIA_ATTACHED and MANIFEST_PARSED received:
+Both MEDIA_ATTACHED and MANIFEST_CREATED received:
   → StreamController selects streams
   → BUFFER_CODECS (per type)
   → BufferController creates SourceBuffers
@@ -133,3 +133,12 @@ Both MEDIA_ATTACHED and MANIFEST_PARSED received:
   → ... repeats until done ...
   → BUFFER_EOS → endOfStream()
 ```
+
+For live presentations (`Manifest.isLive === true`),
+ManifestController additionally runs a `Timer`-driven refresh loop
+on the `liveUpdateTime` config cadence. Each refresh parses a new
+MPD snapshot against the existing Manifest in place, reconciling
+segments (tail append + head prune, keyed on `segment.start`) and
+emits `MANIFEST_UPDATED`. StreamController initial-positions
+playback to `liveEdge - liveDelay` and suppresses EOS while the
+manifest remains live.
