@@ -218,6 +218,20 @@ describe("DashParser", () => {
       expect(segments.map((s) => s.start)).toEqual([0, 4, 8, 12, 16, 20]);
     });
 
+    it("accepts asymmetric Representations across periods (Period 2 adds a new track)", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-multi-period-asymmetric.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.tracks).toHaveLength(2);
+      const ids = video.tracks.map((t) => t.id).sort();
+      expect(ids).toEqual(["1", "2"]);
+      const extra = video.tracks.find((t) => t.id === "2")!;
+      expect(extra.segments.length).toBeGreaterThan(0);
+      expect(extra.segments[0]!.start).toBeGreaterThanOrEqual(30);
+    });
+
     it("last segment covers the full presentation duration", () => {
       const manifest = DashParser.create(
         loadFixture("dash-parser/vod-basic.mpd"),
