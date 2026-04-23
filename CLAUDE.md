@@ -21,10 +21,6 @@ pnpm monorepo for cmaf-lite.
 - `pnpm tsc` — type check all packages
 - `pnpm test` — run tests in all packages
 
-## Superpowers
-
-- `.agents/superpowers/` — planning specs and history
-
 ## Working Guidelines
 
 ### Workflow
