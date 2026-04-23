@@ -3,6 +3,7 @@ import * as DashParser from "../../lib/dash/dash_parser";
 import { MediaType } from "../../lib/types/media";
 import * as asserts from "../../lib/utils/asserts";
 import { loadFixture } from "../fixtures";
+import { findAudio, findSubtitle, findVideo } from "./helpers";
 
 describe("DashParser", () => {
   const sourceUrl = "https://cdn.test/manifest.mpd";
@@ -15,29 +16,21 @@ describe("DashParser", () => {
 
   it("extracts a video switching set with the declared codec", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    );
-    expect(video).toBeDefined();
-    expect(video!.codec).toBe("avc1.64001f");
-    expect(video!.tracks).toHaveLength(2);
+    const video = findVideo(manifest);
+    expect(video.codec).toBe("avc1.64001f");
+    expect(video.tracks).toHaveLength(2);
   });
 
   it("extracts an audio switching set with the declared codec", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const audio = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.AUDIO,
-    );
-    expect(audio).toBeDefined();
-    expect(audio!.codec).toBe("mp4a.40.2");
-    expect(audio!.tracks).toHaveLength(1);
+    const audio = findAudio(manifest);
+    expect(audio.codec).toBe("mp4a.40.2");
+    expect(audio.tracks).toHaveLength(1);
   });
 
   it("resolves video track dimensions from representations", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     const track1080 = video.tracks.find(
       (t) => t.type === MediaType.VIDEO && t.height === 1080,
     );
@@ -50,9 +43,7 @@ describe("DashParser", () => {
 
   it("generates segments with URLs derived from the SegmentTemplate", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     const track = video.tracks[0]!;
     expect(track.segments.length).toBeGreaterThan(0);
 
@@ -64,9 +55,7 @@ describe("DashParser", () => {
 
   it("generates the correct number of segments for the presentation duration", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     const track = video.tracks[0]!;
     // 60s duration / 4s segments = 15 segments
     expect(track.segments).toHaveLength(15);
@@ -80,9 +69,7 @@ describe("DashParser", () => {
     expect(manifest.duration).toBe(60);
     expect(manifest.switchingSets).toHaveLength(2);
 
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     // Single track with segments from both periods
     expect(video.tracks).toHaveLength(1);
     const segments = video.tracks[0]!.segments;
@@ -97,9 +84,7 @@ describe("DashParser", () => {
       loadFixture("dash-parser/vod-multi-period.mpd"),
       sourceUrl,
     );
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     const segments = video.tracks[0]!.segments;
     // Period 2 segments should start at or after 30s
     const p2Segments = segments.filter((s) => s.start >= 30);
@@ -113,14 +98,8 @@ describe("DashParser", () => {
       sourceUrl,
     );
     expect(manifest.switchingSets).toHaveLength(2);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    );
-    const audio = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.AUDIO,
-    );
-    expect(video).toBeDefined();
-    expect(audio).toBeDefined();
+    findVideo(manifest);
+    findAudio(manifest);
   });
 
   it("computes maxSegmentDuration on each track", () => {
@@ -142,23 +121,16 @@ describe("DashParser", () => {
 
   it("parses a subtitle AdaptationSet into a subtitle switching set with language", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-subtitle.mpd"), sourceUrl);
-    const subtitle = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.SUBTITLE,
-    );
-    expect(subtitle).toBeDefined();
-    expect(subtitle!.codec).toBe("wvtt");
-    expect(subtitle!.type).toBe(MediaType.SUBTITLE);
-    if (subtitle!.type === MediaType.SUBTITLE) {
-      expect(subtitle!.language).toBe("en");
-    }
-    expect(subtitle!.tracks).toHaveLength(1);
+    const subtitle = findSubtitle(manifest);
+    expect(subtitle.codec).toBe("wvtt");
+    expect(subtitle.type).toBe(MediaType.SUBTITLE);
+    expect(subtitle.language).toBe("en");
+    expect(subtitle.tracks).toHaveLength(1);
   });
 
   it("builds subtitle track segments from the SegmentTemplate", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-subtitle.mpd"), sourceUrl);
-    const subtitle = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.SUBTITLE,
-    )!;
+    const subtitle = findSubtitle(manifest);
     const track = subtitle.tracks[0]!;
     expect(track.segments.length).toBeGreaterThan(0);
     expect(track.segments[0]!.url).toContain("subtitle-");
@@ -170,9 +142,7 @@ describe("DashParser", () => {
       loadFixture("dash-parser/vod-multi-period.mpd"),
       sourceUrl,
     );
-    const audio = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.AUDIO,
-    )!;
+    const audio = findAudio(manifest);
     expect(audio.tracks).toHaveLength(1);
     const segments = audio.tracks[0]!.segments;
     const p1Segments = segments.filter((s) => s.url.includes("p1-audio-"));
@@ -184,21 +154,15 @@ describe("DashParser", () => {
 
   it("assigns SwitchingSet.id as type:codec for video and type:codec:language for audio", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
-    const audio = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.AUDIO,
-    )!;
+    const video = findVideo(manifest);
+    const audio = findAudio(manifest);
     expect(video.id).toBe("video:avc1.64001f");
     expect(audio.id).toBe("audio:mp4a.40.2:unk");
   });
 
   it("assigns Track.id from Representation@id", () => {
     const manifest = DashParser.create(loadFixture("dash-parser/vod-basic.mpd"), sourceUrl);
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     const ids = video.tracks.map((t) => t.id).sort();
     expect(ids).toEqual(["1", "2"]);
   });
@@ -253,9 +217,7 @@ describe("DashParser.update", () => {
     const sourceText = loadFixture("dash-parser/vod-timeline.mpd");
     const manifest = DashParser.create(sourceText, sourceUrl);
 
-    const video = manifest.switchingSets.find(
-      (ss) => ss.type === MediaType.VIDEO,
-    )!;
+    const video = findVideo(manifest);
     const track = video.tracks[0]!;
     const originalSegments = track.segments;
     const originalCount = originalSegments.length;
@@ -353,12 +315,8 @@ describe("DashParser.update", () => {
       const manifest = DashParser.create(text, sourceUrl);
 
       const switchingSetsRef = manifest.switchingSets;
-      const video = manifest.switchingSets.find(
-        (ss) => ss.type === MediaType.VIDEO,
-      )!;
-      const audio = manifest.switchingSets.find(
-        (ss) => ss.type === MediaType.AUDIO,
-      )!;
+      const video = findVideo(manifest);
+      const audio = findAudio(manifest);
       const videoTrack = video.tracks[0]!;
       const audioTrack = audio.tracks[0]!;
       const videoSegmentsRef = videoTrack.segments;
