@@ -1,10 +1,73 @@
 import type * as txml from "txml";
-import type { SwitchingSet, Track } from "../types/manifest";
+import type { Manifest, SwitchingSet, Track } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
 import * as LanguageUtils from "../utils/language_utils";
 import * as XmlUtils from "../utils/xml_utils";
+
+export type ApplyContext = {
+  sets: SwitchingSet[];
+  switchingSetsById: Map<string, SwitchingSet>;
+  tracksById: Map<string, Track>;
+};
+
+export function createContext(manifest: Manifest): ApplyContext {
+  const ctx: ApplyContext = {
+    sets: manifest.switchingSets,
+    switchingSetsById: new Map(),
+    tracksById: new Map(),
+  };
+  for (const set of manifest.switchingSets) {
+    ctx.switchingSetsById.set(set.id, set);
+    for (const track of set.tracks) {
+      ctx.tracksById.set(`${set.id}:${track.id}`, track);
+    }
+  }
+  return ctx;
+}
+
+export function upsertSwitchingSet(
+  ctx: ApplyContext,
+  adaptationSet: txml.TNode,
+  representations: txml.TNode[],
+): SwitchingSet {
+  const id = getAdaptationSetId(adaptationSet, representations);
+  let set = ctx.switchingSetsById.get(id);
+  if (!set) {
+    set = parseAdaptationSet(adaptationSet, representations);
+    ctx.switchingSetsById.set(id, set);
+    ctx.sets.push(set);
+  }
+  return set;
+}
+
+export function upsertTrack(
+  ctx: ApplyContext,
+  switchingSet: SwitchingSet,
+  adaptationSet: txml.TNode,
+  representation: txml.TNode,
+): Track {
+  const trackId = XmlUtils.attr(representation, "id", XmlUtils.parseString);
+  asserts.assertExists(trackId, "Representation@id is mandatory");
+  const key = `${switchingSet.id}:${trackId}`;
+  let track = ctx.tracksById.get(key);
+  if (!track) {
+    track = buildTrack(
+      switchingSet.type,
+      trackId,
+      adaptationSet,
+      representation,
+    );
+    asserts.assert(
+      track.type === switchingSet.type,
+      "Track type must match SwitchingSet type",
+    );
+    ctx.tracksById.set(key, track);
+    (switchingSet.tracks as Track[]).push(track);
+  }
+  return track;
+}
 
 export function getAdaptationSetId(
   adaptationSet: txml.TNode,
