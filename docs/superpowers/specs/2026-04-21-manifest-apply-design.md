@@ -200,12 +200,12 @@ segments directly into a caller-provided target and returns the
 contributed `maxSegmentDuration`. `SegmentData`, `mapTemplateTimeline`,
 and `mapTemplateDuration` are removed.
 
-`appendSegments` extracts the shared template context, then dispatches
-by priority to one of two private helpers. Both template-addressing
-modes (`SegmentTimeline`, `@duration`) can be present on a template in
-principle; DASH gives `SegmentTimeline` priority when it exists. Both
-helpers push `Segment` objects directly into `target` — no
-intermediate collection.
+The two template-addressing modes (SegmentTimeline vs `@duration`)
+have different iteration shapes but share the per-segment
+construction (URL templating, start/end math, push,
+`maxSegmentDuration` tracking). They are inlined into a single
+function with two branches that each push segments directly into
+`target`. No intermediate collection is allocated.
 
 ```ts
 export function appendSegments(
@@ -240,93 +240,53 @@ export function appendSegments(
     ),
   };
 
+  let maxSegmentDuration = 0;
+
   const timeline = XmlUtils.child(st, "SegmentTimeline");
   if (timeline) {
-    return appendSegmentsFromTimeline(
-      target, timeline,
-      media, id, bandwidth, baseUrl,
-      timescale, startNumber, pto, periodStart, initSegment,
-    );
+    let time = 0;
+    let number = startNumber;
+    for (const s of XmlUtils.children(timeline, "S")) {
+      const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
+      asserts.assertExists(duration, "segment duration is mandatory");
+      const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
+      time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
+      for (let i = 0; i <= r; i++) {
+        const url = UrlUtils.resolveUrl(
+          processUriTemplate(media, id, number, null, bandwidth, time),
+          baseUrl,
+        );
+        const start = (time - pto) / timescale + periodStart;
+        const end = (time - pto + duration) / timescale + periodStart;
+        target.push({ url, start, end, initSegment });
+        maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
+        time += duration;
+        number++;
+      }
+    }
+    return maxSegmentDuration;
   }
 
-  const templateDuration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
+  const duration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
   asserts.assertExists(
-    templateDuration,
+    duration,
     "SegmentTemplate requires either SegmentTimeline or @duration",
   );
   asserts.assertExists(
     periodDuration,
     "Duration-based addressing requires a resolvable period duration",
   );
-  return appendSegmentsFromDuration(
-    target, templateDuration, periodDuration,
-    media, id, bandwidth, baseUrl,
-    timescale, startNumber, pto, periodStart, initSegment,
-  );
-}
 
-function appendSegmentsFromTimeline(
-  target: Segment[],
-  timeline: txml.TNode,
-  media: string,
-  id: string | undefined,
-  bandwidth: number,
-  baseUrl: string,
-  timescale: number,
-  startNumber: number,
-  pto: number,
-  periodStart: number,
-  initSegment: InitSegment,
-): number {
-  let maxSegmentDuration = 0;
-  let time = 0;
-  let number = startNumber;
-  for (const s of XmlUtils.children(timeline, "S")) {
-    const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
-    asserts.assertExists(duration, "segment duration is mandatory");
-    const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
-    time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
-    for (let i = 0; i <= r; i++) {
-      const url = UrlUtils.resolveUrl(
-        processUriTemplate(media, id, number, null, bandwidth, time),
-        baseUrl,
-      );
-      const start = (time - pto) / timescale + periodStart;
-      const end = (time - pto + duration) / timescale + periodStart;
-      target.push({ url, start, end, initSegment });
-      maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
-      time += duration;
-      number++;
-    }
-  }
-  return maxSegmentDuration;
-}
-
-function appendSegmentsFromDuration(
-  target: Segment[],
-  templateDuration: number,
-  periodDuration: number,
-  media: string,
-  id: string | undefined,
-  bandwidth: number,
-  baseUrl: string,
-  timescale: number,
-  startNumber: number,
-  pto: number,
-  periodStart: number,
-  initSegment: InitSegment,
-): number {
-  let maxSegmentDuration = 0;
-  const count = Math.ceil(periodDuration / (templateDuration / timescale));
+  const count = Math.ceil(periodDuration / (duration / timescale));
   for (let i = 0; i < count; i++) {
     const number = startNumber + i;
-    const time = i * templateDuration;
+    const time = i * duration;
     const url = UrlUtils.resolveUrl(
       processUriTemplate(media, id, number, null, bandwidth, time),
       baseUrl,
     );
     const start = (time - pto) / timescale + periodStart;
-    const end = (time - pto + templateDuration) / timescale + periodStart;
+    const end = (time - pto + duration) / timescale + periodStart;
     target.push({ url, start, end, initSegment });
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
@@ -334,12 +294,11 @@ function appendSegmentsFromDuration(
 }
 ```
 
-The helpers carry long parameter lists (11 and 12 respectively).
-That's acceptable because each is invoked from exactly one site, and
-passing the extracted values keeps both helpers free of XML-attribute
-work — the two functions read as pure *iteration shape*, not as
-*iteration shape mixed with configuration parsing*. `appendSegments`
-owns the configuration parse exactly once.
+The per-segment construction is duplicated across the two branches
+(roughly seven lines each). That is the price of keeping the function
+flat and allocation-free. Extracting it to a helper would need either
+nine-parameter plumbing, a closure, or a context DTO — all of which
+are heavier than the duplication they would avoid.
 
 ## Identity guarantees
 
@@ -410,7 +369,7 @@ the top.
 | `lib/dash/dash_parser.ts` | Refactor `parseManifest` onto a shared `applyMpd`; add `updateManifest` export |
 | `lib/dash/dash_periods.ts` | Replace `flattenPeriods` with `applyPeriods`; move skeleton construction (`parseAdaptationSet`, `getAdaptationSetId`, `resolveType`, `resolveCodec`) and track upsert out to `dash_adaptations.ts`; move `resolveBaseUrl` out to `dash_segments.ts`; delete `mergeTrack`, `mergeTrackSegments`, old `parseRepresentation` |
 | `lib/dash/dash_adaptations.ts` *(new)* | `ApplyContext` type, `createContext`, `upsertSwitchingSet`, `upsertTrack`, `buildTrack`, `parseAdaptationSet`, `getAdaptationSetId`, `resolveType`, `resolveCodec` |
-| `lib/dash/dash_segments.ts` | Replace `parseSegmentData` with `appendSegments` + priority-dispatched `appendSegmentsFromTimeline` / `appendSegmentsFromDuration` that push directly into `target`; pull `bandwidth` and `baseUrl` extraction into `appendSegments`; absorb `resolveBaseUrl` from `dash_periods.ts`; delete `mapTemplateTimeline`, `mapTemplateDuration`, `SegmentData` |
+| `lib/dash/dash_segments.ts` | Replace `parseSegmentData` with `appendSegments` (inlined timeline + duration branches pushing directly into `target`); pull `bandwidth` and `baseUrl` extraction into `appendSegments`; absorb `resolveBaseUrl` from `dash_periods.ts`; delete `mapTemplateTimeline`, `mapTemplateDuration`, `SegmentData` |
 
 ## Testing
 
