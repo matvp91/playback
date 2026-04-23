@@ -40,7 +40,7 @@ export function upsertSwitchingSet(
   const id = getAdaptationSetId(adaptationSet, representations);
   let set = ctx.switchingSetsById.get(id);
   if (!set) {
-    set = parseAdaptationSet(adaptationSet, representations);
+    set = parseAdaptationSet(id, adaptationSet, representations);
     ctx.switchingSetsById.set(id, set);
     ctx.sets.push(set);
   }
@@ -101,10 +101,10 @@ export function getAdaptationSetId(
 }
 
 export function parseAdaptationSet(
+  id: string,
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
-  const id = getAdaptationSetId(adaptationSet, representations);
   const type = resolveType(adaptationSet, representations);
   const codec = resolveCodec(adaptationSet, representations);
 
