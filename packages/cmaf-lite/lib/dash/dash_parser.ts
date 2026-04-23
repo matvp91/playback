@@ -299,7 +299,7 @@ function buildTrack(
   throw new Error("Unsupported media type");
 }
 
-export function appendSegments(
+function appendSegments(
   ctx: ReadContext,
   target: Segment[],
   mpd: txml.TNode,
