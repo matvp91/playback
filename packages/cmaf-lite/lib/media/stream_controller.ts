@@ -296,8 +296,10 @@ export class StreamController {
     }
 
     if (!segment) {
-      mediaState.ended = true;
-      this.checkEndOfStream_();
+      if (!this.isLive_) {
+        mediaState.ended = true;
+        this.checkEndOfStream_();
+      }
       return;
     }
 
