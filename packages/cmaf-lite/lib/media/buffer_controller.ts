@@ -86,9 +86,7 @@ export class BufferController {
   };
 
   private onManifestCreated_ = (event: ManifestCreatedEvent) => {
-    this.duration_ = event.manifest.isLive
-      ? Number.POSITIVE_INFINITY
-      : event.manifest.duration;
+    this.duration_ = event.manifest.isLive ? Infinity : event.manifest.duration;
     this.updateDuration_();
   };
 
@@ -271,9 +269,9 @@ export class BufferController {
   }
 
   /**
-   * Set mediaSource.duration from the manifest. Uses
-   * blockUntil to avoid InvalidStateError when a
-   * SourceBuffer is updating.
+   * Apply the cached duration to mediaSource.duration. Uses
+   * blockUntil to avoid InvalidStateError when a SourceBuffer
+   * is updating.
    */
   private updateDuration_() {
     if (this.duration_ === null || this.mediaSource_?.readyState !== "open") {
