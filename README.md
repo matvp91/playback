@@ -38,8 +38,8 @@ Registry.add(RegistryType.MANIFEST_PARSER, DashParser);
 const player = new Player();
 const video = document.getElementById("video");
 
-player.on(Events.MANIFEST_PARSED, (event) => {
-  console.log("Manifest parsed:", event.manifest);
+player.on(Events.MANIFEST_CREATED, (event) => {
+  console.log("Manifest created:", event.manifest);
 });
 
 player.attachMedia(video);
