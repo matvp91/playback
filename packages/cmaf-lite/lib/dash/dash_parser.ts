@@ -10,6 +10,7 @@ import type {
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
+import * as ManifestUtils from "../utils/manifest_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import {
@@ -27,6 +28,7 @@ type ReadContext = {
   switchingSetsById: Map<string, SwitchingSet>;
   tracksById: Map<string, Track>;
   sourceUrl: string;
+  isUpdate: boolean;
 };
 
 export function create(text: string, sourceUrl: string): Manifest {
@@ -42,16 +44,21 @@ export function update(
   sourceUrl: string,
 ): void {
   const mpd = XmlUtils.parseXml(text, "MPD");
-  readMpd(manifest, mpd, sourceUrl);
+  readMpd(manifest, mpd, sourceUrl, true);
 }
 
-function readMpd(manifest: Manifest, mpd: txml.TNode, sourceUrl: string): void {
+function readMpd(
+  manifest: Manifest,
+  mpd: txml.TNode,
+  sourceUrl: string,
+  isUpdate = false,
+): void {
   const periods = XmlUtils.children(mpd, "Period");
   if (periods.length === 0) {
     throw new Error("No Period found in manifest");
   }
 
-  const ctx = createContext(manifest, sourceUrl);
+  const ctx = createContext(manifest, sourceUrl, isUpdate);
   for (let i = 0; i < periods.length; i++) {
     readPeriod(ctx, mpd, periods, i);
   }
@@ -113,7 +120,10 @@ function readRepresentation(
   periodDuration: number | null,
 ): void {
   const track = upsertTrack(ctx, switchingSet, adaptationSet, representation);
-  const { maxSegmentDuration } = appendSegments(
+  const startAfter = ctx.isUpdate
+    ? (track.segments.at(-1)?.start ?? -Infinity)
+    : -Infinity;
+  const { maxSegmentDuration, firstAvailableStart } = appendSegments(
     track.segments,
     ctx.sourceUrl,
     mpd,
@@ -121,20 +131,28 @@ function readRepresentation(
     adaptationSet,
     representation,
     periodDuration,
-    -Infinity,
+    startAfter,
   );
+  if (ctx.isUpdate) {
+    ManifestUtils.pruneSegments(track.segments, firstAvailableStart);
+  }
   track.maxSegmentDuration = Math.max(
     track.maxSegmentDuration,
     maxSegmentDuration,
   );
 }
 
-function createContext(manifest: Manifest, sourceUrl: string): ReadContext {
+function createContext(
+  manifest: Manifest,
+  sourceUrl: string,
+  isUpdate = false,
+): ReadContext {
   const ctx: ReadContext = {
     sets: manifest.switchingSets,
     switchingSetsById: new Map(),
     tracksById: new Map(),
     sourceUrl,
+    isUpdate,
   };
   for (const switchingSet of manifest.switchingSets) {
     ctx.switchingSetsById.set(switchingSet.id, switchingSet);

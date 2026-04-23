@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as DashParser from "../../lib/dash/dash_parser";
 import { MediaType } from "../../lib/types/media";
+import * as asserts from "../../lib/utils/asserts";
 import { loadFixture } from "../fixtures";
 
 describe("DashParser", () => {
@@ -275,5 +276,96 @@ describe("DashParser.update", () => {
     expect(track.segments.length).toBeGreaterThan(originalCount);
     expect(track.segments[0]).toBe(originalFirst);
     expect(track.segments[originalCount - 1]).toBe(originalLast);
+  });
+
+  describe("update — live reconciliation", () => {
+    it("appends new tail segments and prunes expired head segments", () => {
+      const manifest = DashParser.create(
+        loadFixture("live-timeline-1.mpd"),
+        sourceUrl,
+      );
+      const track = manifest.switchingSets[0]?.tracks[0];
+      asserts.assertExists(track, "track not found");
+      expect(track.segments.map((s) => s.start)).toEqual([0, 4, 8, 12, 16]);
+
+      DashParser.update(
+        manifest,
+        loadFixture("live-timeline-2.mpd"),
+        sourceUrl,
+      );
+
+      // After update: DVR window shifted — start=0,4 pruned, start=20,24 appended
+      expect(track.segments.map((s) => s.start)).toEqual([8, 12, 16, 20, 24]);
+    });
+
+    it("preserves object identity for overlapping segments across an update", () => {
+      const manifest = DashParser.create(
+        loadFixture("live-timeline-1.mpd"),
+        sourceUrl,
+      );
+      const track = manifest.switchingSets[0]?.tracks[0];
+      asserts.assertExists(track, "track not found");
+      const kept = [
+        track.segments[2],
+        track.segments[3],
+        track.segments[4],
+      ];
+      asserts.assertExists(kept[0], "kept[0]");
+      asserts.assertExists(kept[1], "kept[1]");
+      asserts.assertExists(kept[2], "kept[2]");
+
+      DashParser.update(
+        manifest,
+        loadFixture("live-timeline-2.mpd"),
+        sourceUrl,
+      );
+
+      // Segments that straddle both MPD snapshots must remain the same object refs.
+      expect(track.segments[0]).toBe(kept[0]);
+      expect(track.segments[1]).toBe(kept[1]);
+      expect(track.segments[2]).toBe(kept[2]);
+    });
+
+    it("preserves Track and SwitchingSet identity across an update", () => {
+      const manifest = DashParser.create(
+        loadFixture("live-timeline-1.mpd"),
+        sourceUrl,
+      );
+      const switchingSet = manifest.switchingSets[0];
+      asserts.assertExists(switchingSet, "switchingSet not found");
+      const track = switchingSet.tracks[0];
+      asserts.assertExists(track, "track not found");
+      const segmentsArray = track.segments;
+
+      DashParser.update(
+        manifest,
+        loadFixture("live-timeline-2.mpd"),
+        sourceUrl,
+      );
+
+      expect(manifest.switchingSets[0]).toBe(switchingSet);
+      expect(switchingSet.tracks[0]).toBe(track);
+      expect(switchingSet.tracks[0]?.segments).toBe(segmentsArray);
+    });
+
+    it("uses the refreshed MPD's first-segment start as the prune watermark", () => {
+      // Edge case flagged in Task 7 review: first <S> in the updated MPD
+      // has t != 0 (timeline-2 starts at t=8000 ms → start=8s).
+      const manifest = DashParser.create(
+        loadFixture("live-timeline-1.mpd"),
+        sourceUrl,
+      );
+      const track = manifest.switchingSets[0]?.tracks[0];
+      asserts.assertExists(track, "track not found");
+
+      DashParser.update(
+        manifest,
+        loadFixture("live-timeline-2.mpd"),
+        sourceUrl,
+      );
+
+      // Head trimmed to the MPD's new earliest start (8), not 0.
+      expect(track.segments[0]?.start).toBe(8);
+    });
   });
 });
