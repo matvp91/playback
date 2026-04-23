@@ -421,6 +421,15 @@ describe("DashParser", () => {
         DashParser.create(loadFixture("dash-parser/vod-no-periods.mpd"), sourceUrl),
       ).toThrow();
     });
+
+    it("throws when no SegmentTemplate is declared at any level", () => {
+      expect(() =>
+        DashParser.create(
+          loadFixture("dash-parser/vod-no-template.mpd"),
+          sourceUrl,
+        ),
+      ).toThrow();
+    });
   });
 
   describe("update", () => {
