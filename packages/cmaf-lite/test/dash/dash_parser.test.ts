@@ -112,11 +112,9 @@ describe("DashParser", () => {
   });
 
   it("throws when MPD contains no Period elements", () => {
-    const emptyMpd = `<?xml version="1.0" encoding="UTF-8"?>
-<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"
-     mediaPresentationDuration="PT60S">
-</MPD>`;
-    expect(() => DashParser.create(emptyMpd, sourceUrl)).toThrow();
+    expect(() =>
+      DashParser.create(loadFixture("dash-parser/vod-no-periods.mpd"), sourceUrl),
+    ).toThrow();
   });
 
   it("parses a subtitle AdaptationSet into a subtitle switching set with language", () => {
