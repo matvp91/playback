@@ -19,6 +19,7 @@ import type {
 export const Events = {
   MANIFEST_LOADING: "manifestLoading",
   MANIFEST_CREATED: "manifestCreated",
+  MANIFEST_UPDATED: "manifestUpdated",
   MEDIA_ATTACHING: "mediaAttaching",
   MEDIA_ATTACHED: "mediaAttached",
   MEDIA_DETACHING: "mediaDetaching",
@@ -52,6 +53,16 @@ export interface ManifestLoadingEvent {
  * @public
  */
 export interface ManifestCreatedEvent {
+  manifest: Manifest;
+}
+
+/**
+ * Fired when a live manifest has been refreshed and reconciled in place.
+ * Carries the same mutated manifest reference that consumers already hold.
+ *
+ * @public
+ */
+export interface ManifestUpdatedEvent {
   manifest: Manifest;
 }
 
@@ -197,6 +208,7 @@ export interface NetworkResponseEvent {
 export interface EventMap {
   [Events.MANIFEST_LOADING]: (event: ManifestLoadingEvent) => void;
   [Events.MANIFEST_CREATED]: (event: ManifestCreatedEvent) => void;
+  [Events.MANIFEST_UPDATED]: (event: ManifestUpdatedEvent) => void;
   [Events.MEDIA_ATTACHING]: (event: MediaAttachingEvent) => void;
   [Events.MEDIA_ATTACHED]: (event: MediaAttachedEvent) => void;
   [Events.MEDIA_DETACHING]: (event: MediaDetachingEvent) => void;
