@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import * as DashParser from "../../lib/dash/dash_parser";
+import type { Segment } from "../../lib/types/manifest";
 import { MediaType } from "../../lib/types/media";
+import * as asserts from "../../lib/utils/asserts";
+import * as XmlUtils from "../../lib/utils/xml_utils";
 import { loadFixture } from "../fixtures";
 
 const sourceUrl = "https://cdn.test/manifest.mpd";
@@ -107,6 +110,64 @@ describe("DashSegments", () => {
       // Third segment: time reset to 900000/90000 = 10s
       expect(segments[2]!.start).toBeCloseTo(10, 5);
       expect(segments[2]!.end).toBeCloseTo(12, 5);
+    });
+  });
+
+  describe("startAfter delta behavior", () => {
+    it("emits all segments when startAfter is -Infinity", () => {
+      // timeline.mpd: <S t="0" d="360000" r="2"/> with timescale=90000 → 3 segments
+      //   at start = 0, 4, 8
+      const segments: Segment[] = [];
+      const mpd = XmlUtils.parseXml(loadFixture("timeline.mpd"), "MPD");
+      const period = XmlUtils.child(mpd, "Period");
+      asserts.assertExists(period, "Period not found");
+      const adaptationSet = XmlUtils.child(period, "AdaptationSet");
+      asserts.assertExists(adaptationSet, "AdaptationSet not found");
+      const representation = XmlUtils.child(adaptationSet, "Representation");
+      asserts.assertExists(representation, "Representation not found");
+
+      const { firstAvailableStart } = DashParser.appendSegments(
+        segments,
+        sourceUrl,
+        mpd,
+        period,
+        adaptationSet,
+        representation,
+        /* periodDuration */ 12,
+        /* startAfter */ -Infinity,
+      );
+
+      expect(segments).toHaveLength(3);
+      expect(segments.map((s) => s.start)).toEqual([0, 4, 8]);
+      expect(firstAvailableStart).toBe(0);
+    });
+
+    it("skips segments at or below startAfter and emits only newer ones", () => {
+      const segments: Segment[] = [];
+      const mpd = XmlUtils.parseXml(loadFixture("timeline.mpd"), "MPD");
+      const period = XmlUtils.child(mpd, "Period");
+      asserts.assertExists(period, "Period not found");
+      const adaptationSet = XmlUtils.child(period, "AdaptationSet");
+      asserts.assertExists(adaptationSet, "AdaptationSet not found");
+      const representation = XmlUtils.child(adaptationSet, "Representation");
+      asserts.assertExists(representation, "Representation not found");
+
+      const { firstAvailableStart } = DashParser.appendSegments(
+        segments,
+        sourceUrl,
+        mpd,
+        period,
+        adaptationSet,
+        representation,
+        12,
+        /* startAfter */ 4,
+      );
+
+      // segments with start <= 4 are skipped (start=0 and start=4)
+      expect(segments).toHaveLength(1);
+      expect(segments[0]?.start).toBe(8);
+      // firstAvailableStart reports the MPD's earliest segment, not the emitted one
+      expect(firstAvailableStart).toBe(0);
     });
   });
 });

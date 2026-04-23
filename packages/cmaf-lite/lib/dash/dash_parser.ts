@@ -113,16 +113,20 @@ function readRepresentation(
   periodDuration: number | null,
 ): void {
   const track = upsertTrack(ctx, switchingSet, adaptationSet, representation);
-  const max = appendSegments(
+  const { maxSegmentDuration } = appendSegments(
     track.segments,
-    ctx,
+    ctx.sourceUrl,
     mpd,
     period,
     adaptationSet,
     representation,
     periodDuration,
+    -Infinity,
   );
-  track.maxSegmentDuration = Math.max(track.maxSegmentDuration, max);
+  track.maxSegmentDuration = Math.max(
+    track.maxSegmentDuration,
+    maxSegmentDuration,
+  );
 }
 
 function createContext(manifest: Manifest, sourceUrl: string): ReadContext {
@@ -278,17 +282,18 @@ function buildTrack(
   throw new Error("Unsupported media type");
 }
 
-function appendSegments(
+export function appendSegments(
   target: Segment[],
-  ctx: ReadContext,
+  sourceUrl: string,
   mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
   periodDuration: number | null,
-): number {
+  startAfter: number,
+): { maxSegmentDuration: number; firstAvailableStart: number } {
   const baseUrl = resolveBaseUrl(
-    ctx.sourceUrl,
+    sourceUrl,
     mpd,
     period,
     adaptationSet,
@@ -351,6 +356,7 @@ function appendSegments(
   };
 
   let maxSegmentDuration = 0;
+  let firstAvailableStart = Number.POSITIVE_INFINITY;
 
   const timeline = XmlUtils.child(segmentTemplate, "SegmentTimeline");
   if (timeline) {
@@ -365,8 +371,23 @@ function appendSegments(
       const repeat = XmlUtils.attr(timelineEntry, "r", XmlUtils.parseNumber, 0);
       time = XmlUtils.attr(timelineEntry, "t", XmlUtils.parseNumber, time);
 
+      if (firstAvailableStart === Number.POSITIVE_INFINITY) {
+        firstAvailableStart =
+          (time - presentationTimeOffset) / timescale + periodStart;
+      }
+
       for (let i = 0; i <= repeat; i++) {
-        const uri = processUriTemplate(
+        const start = (time - presentationTimeOffset) / timescale + periodStart;
+        const end =
+          (time - presentationTimeOffset + duration) / timescale + periodStart;
+
+        if (start <= startAfter) {
+          time += duration;
+          number++;
+          continue;
+        }
+
+        const segmentUri = processUriTemplate(
           media,
           id,
           number,
@@ -374,11 +395,7 @@ function appendSegments(
           bandwidth,
           time,
         );
-
-        const url = UrlUtils.resolveUrl(uri, baseUrl);
-        const start = (time - presentationTimeOffset) / timescale + periodStart;
-        const end =
-          (time - presentationTimeOffset + duration) / timescale + periodStart;
+        const url = UrlUtils.resolveUrl(segmentUri, baseUrl);
 
         target.push({ url, start, end, initSegment });
 
@@ -388,7 +405,10 @@ function appendSegments(
       }
     }
 
-    return maxSegmentDuration;
+    if (firstAvailableStart === Number.POSITIVE_INFINITY) {
+      firstAvailableStart = periodStart;
+    }
+    return { maxSegmentDuration, firstAvailableStart };
   }
 
   asserts.assertExists(
@@ -406,14 +426,33 @@ function appendSegments(
   for (let i = 0; i < count; i++) {
     const number = startNumber + i;
     const time = i * duration;
-    const uri = processUriTemplate(media, id, number, null, bandwidth, time);
-    const url = UrlUtils.resolveUrl(uri, baseUrl);
     const start = (time - presentationTimeOffset) / timescale + periodStart;
     const end =
       (time - presentationTimeOffset + duration) / timescale + periodStart;
+
+    if (i === 0) {
+      firstAvailableStart = start;
+    }
+
+    if (start <= startAfter) {
+      continue;
+    }
+
+    const segmentUri = processUriTemplate(
+      media,
+      id,
+      number,
+      null,
+      bandwidth,
+      time,
+    );
+    const url = UrlUtils.resolveUrl(segmentUri, baseUrl);
     target.push({ url, start, end, initSegment });
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
 
-  return maxSegmentDuration;
+  if (firstAvailableStart === Number.POSITIVE_INFINITY) {
+    firstAvailableStart = periodStart;
+  }
+  return { maxSegmentDuration, firstAvailableStart };
 }
