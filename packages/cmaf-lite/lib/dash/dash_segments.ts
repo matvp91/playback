@@ -6,19 +6,29 @@ import * as Functional from "../utils/functional";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 
-type SegmentData = {
-  segments: Segment[];
-  maxSegmentDuration: number;
-};
-
-export function parseSegmentData(
+export function appendSegments(
+  target: Segment[],
+  sourceUrl: string,
+  mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
-  baseUrl: string,
-  bandwidth: number,
-  duration: number | null,
-): SegmentData {
+  periodDuration: number | null,
+): number {
+  const baseUrl = resolveBaseUrl(
+    sourceUrl,
+    mpd,
+    period,
+    adaptationSet,
+    representation,
+  );
+  const bandwidth = XmlUtils.attr(
+    representation,
+    "bandwidth",
+    XmlUtils.parseNumber,
+  );
+  asserts.assertExists(bandwidth, "bandwidth is mandatory");
+
   const st = resolveSegmentTemplate(period, adaptationSet, representation);
 
   const initialization = XmlUtils.attr(
@@ -27,11 +37,17 @@ export function parseSegmentData(
     XmlUtils.parseString,
   );
   asserts.assertExists(initialization, "initialization is mandatory");
-
-  const periodStart =
-    XmlUtils.attr(period, "start", XmlUtils.parseDuration) ?? 0;
+  const media = XmlUtils.attr(st, "media", XmlUtils.parseString);
+  asserts.assertExists(media, "media is mandatory");
 
   const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
+  const timescale = XmlUtils.attr(st, "timescale", XmlUtils.parseNumber) ?? 1;
+  const startNumber =
+    XmlUtils.attr(st, "startNumber", XmlUtils.parseNumber) ?? 1;
+  const pto =
+    XmlUtils.attr(st, "presentationTimeOffset", XmlUtils.parseNumber) ?? 0;
+  const periodStart =
+    XmlUtils.attr(period, "start", XmlUtils.parseDuration) ?? 0;
 
   const initSegment: InitSegment = {
     url: UrlUtils.resolveUrl(
@@ -40,130 +56,73 @@ export function parseSegmentData(
     ),
   };
 
-  const timeline = XmlUtils.child(st, "SegmentTimeline");
-  return timeline
-    ? mapTemplateTimeline(
-        st,
-        timeline,
-        id,
-        baseUrl,
-        bandwidth,
-        periodStart,
-        initSegment,
-      )
-    : mapTemplateDuration(
-        st,
-        id,
-        baseUrl,
-        bandwidth,
-        periodStart,
-        duration,
-        initSegment,
-      );
-}
-
-function mapTemplateTimeline(
-  st: txml.TNode,
-  timeline: txml.TNode,
-  id: string | undefined,
-  baseUrl: string,
-  bandwidth: number,
-  periodStart: number,
-  initSegment: InitSegment,
-): SegmentData {
-  const media = XmlUtils.attr(st, "media", XmlUtils.parseString);
-  asserts.assertExists(media, "media is mandatory");
-
-  const timescale = XmlUtils.attr(st, "timescale", XmlUtils.parseNumber) ?? 1;
-  const startNumber =
-    XmlUtils.attr(st, "startNumber", XmlUtils.parseNumber) ?? 1;
-  const pto =
-    XmlUtils.attr(st, "presentationTimeOffset", XmlUtils.parseNumber) ?? 0;
-
-  const segments: Segment[] = [];
   let maxSegmentDuration = 0;
-  let time = 0;
-  let number = startNumber;
 
-  for (const s of XmlUtils.children(timeline, "S")) {
-    const d = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
-    asserts.assertExists(d, "segment duration is mandatory");
-    const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
-
-    time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
-
-    for (let i = 0; i <= r; i++) {
-      const relativeUrl = processUriTemplate(
-        media,
-        id,
-        number,
-        null,
-        bandwidth,
-        time,
-      );
-      const url = UrlUtils.resolveUrl(relativeUrl, baseUrl);
-      const start = (time - pto) / timescale + periodStart;
-      const end = (time - pto + d) / timescale + periodStart;
-      segments.push({ url, start, end, initSegment });
-      maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
-      time += d;
-      number++;
+  const timeline = XmlUtils.child(st, "SegmentTimeline");
+  if (timeline) {
+    let time = 0;
+    let number = startNumber;
+    for (const s of XmlUtils.children(timeline, "S")) {
+      const duration = XmlUtils.attr(s, "d", XmlUtils.parseNumber);
+      asserts.assertExists(duration, "segment duration is mandatory");
+      const r = XmlUtils.attr(s, "r", XmlUtils.parseNumber) ?? 0;
+      time = XmlUtils.attr(s, "t", XmlUtils.parseNumber) ?? time;
+      for (let i = 0; i <= r; i++) {
+        const url = UrlUtils.resolveUrl(
+          processUriTemplate(media, id, number, null, bandwidth, time),
+          baseUrl,
+        );
+        const start = (time - pto) / timescale + periodStart;
+        const end = (time - pto + duration) / timescale + periodStart;
+        target.push({ url, start, end, initSegment });
+        maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
+        time += duration;
+        number++;
+      }
     }
+    return maxSegmentDuration;
   }
 
-  return { segments, maxSegmentDuration };
-}
-
-function mapTemplateDuration(
-  st: txml.TNode,
-  id: string | undefined,
-  baseUrl: string,
-  bandwidth: number,
-  periodStart: number,
-  presentationDuration: number | null,
-  initSegment: InitSegment,
-): SegmentData {
-  const media = XmlUtils.attr(st, "media", XmlUtils.parseString);
-  asserts.assertExists(media, "media is mandatory");
+  const duration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
   asserts.assertExists(
-    presentationDuration,
-    "Duration-based addressing requires a resolvable presentation duration",
-  );
-
-  const templateDuration = XmlUtils.attr(st, "duration", XmlUtils.parseNumber);
-  asserts.assertExists(
-    templateDuration,
+    duration,
     "SegmentTemplate requires either SegmentTimeline or @duration",
   );
+  asserts.assertExists(
+    periodDuration,
+    "Duration-based addressing requires a resolvable period duration",
+  );
 
-  const timescale = XmlUtils.attr(st, "timescale", XmlUtils.parseNumber) ?? 1;
-  const startNumber =
-    XmlUtils.attr(st, "startNumber", XmlUtils.parseNumber) ?? 1;
-  const pto =
-    XmlUtils.attr(st, "presentationTimeOffset", XmlUtils.parseNumber) ?? 0;
-
-  const segmentDuration = templateDuration / timescale;
-  const segmentCount = Math.ceil(presentationDuration / segmentDuration);
-
-  const segments: Segment[] = [];
-  for (let i = 0; i < segmentCount; i++) {
+  const count = Math.ceil(periodDuration / (duration / timescale));
+  for (let i = 0; i < count; i++) {
     const number = startNumber + i;
-    const time = i * templateDuration;
-    const relativeUrl = processUriTemplate(
-      media,
-      id,
-      number,
-      null,
-      bandwidth,
-      time,
+    const time = i * duration;
+    const url = UrlUtils.resolveUrl(
+      processUriTemplate(media, id, number, null, bandwidth, time),
+      baseUrl,
     );
-    const url = UrlUtils.resolveUrl(relativeUrl, baseUrl);
     const start = (time - pto) / timescale + periodStart;
-    const end = (time - pto + templateDuration) / timescale + periodStart;
-    segments.push({ url, start, end, initSegment });
+    const end = (time - pto + duration) / timescale + periodStart;
+    target.push({ url, start, end, initSegment });
+    maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
+  return maxSegmentDuration;
+}
 
-  return { segments, maxSegmentDuration: segmentDuration };
+export function resolveBaseUrl(
+  sourceUrl: string,
+  mpd: txml.TNode,
+  period: txml.TNode,
+  adaptationSet: txml.TNode,
+  representation: txml.TNode,
+): string {
+  const baseUrls = [mpd, period, adaptationSet, representation].flatMap(
+    (node) => XmlUtils.children(node, "BaseURL").map(XmlUtils.text),
+  );
+  return UrlUtils.resolveUrls([
+    sourceUrl,
+    ...baseUrls.filter((u): u is string => u != null),
+  ]);
 }
 
 function resolveSegmentTemplate(
@@ -181,7 +140,6 @@ function resolveSegmentTemplate(
     throw new Error("We've got to have some sort of templating");
   }
 
-  // Parent → child iteration so child attributes overwrite parent's.
   const attributes: Record<string, string | null> = {};
   for (const t of templates.slice().reverse()) {
     Object.assign(attributes, t.attributes);

@@ -1,12 +1,11 @@
 import type * as txml from "txml";
-import type { SwitchingSet, Track } from "../types/manifest";
+import type { Segment, SwitchingSet, Track } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
 import * as LanguageUtils from "../utils/language_utils";
-import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
-import { parseSegmentData } from "./dash_segments";
+import { appendSegments } from "./dash_segments";
 
 export function flattenPeriods(
   sourceUrl: string,
@@ -136,13 +135,6 @@ function parseRepresentation(
   const id = XmlUtils.attr(representation, "id", XmlUtils.parseString);
   asserts.assertExists(id, "Representation@id is mandatory");
 
-  const baseUrl = resolveBaseUrl(
-    sourceUrl,
-    mpd,
-    period,
-    adaptationSet,
-    representation,
-  );
   const bandwidth = XmlUtils.attr(
     representation,
     "bandwidth",
@@ -150,12 +142,14 @@ function parseRepresentation(
   );
   asserts.assertExists(bandwidth, "bandwidth is mandatory");
 
-  const segmentData = parseSegmentData(
+  const segments: Segment[] = [];
+  const maxSegmentDuration = appendSegments(
+    segments,
+    sourceUrl,
+    mpd,
     period,
     adaptationSet,
     representation,
-    baseUrl,
-    bandwidth,
     duration,
   );
 
@@ -174,24 +168,15 @@ function parseRepresentation(
       width,
       height,
       bandwidth,
-      ...segmentData,
+      segments,
+      maxSegmentDuration,
     };
   }
   if (type === MediaType.AUDIO) {
-    return {
-      id,
-      type,
-      bandwidth,
-      ...segmentData,
-    };
+    return { id, type, bandwidth, segments, maxSegmentDuration };
   }
   if (type === MediaType.SUBTITLE) {
-    return {
-      id,
-      type,
-      bandwidth,
-      ...segmentData,
-    };
+    return { id, type, bandwidth, segments, maxSegmentDuration };
   }
   throw new Error("Unsupported media type");
 }
@@ -271,22 +256,6 @@ function resolveCodec(
   asserts.assertExists(codec, "codecs is mandatory");
 
   return codec;
-}
-
-function resolveBaseUrl(
-  sourceUrl: string,
-  mpd: txml.TNode,
-  period: txml.TNode,
-  adaptationSet: txml.TNode,
-  representation: txml.TNode,
-): string {
-  const baseUrls = [mpd, period, adaptationSet, representation].flatMap(
-    (node) => XmlUtils.children(node, "BaseURL").map(XmlUtils.text),
-  );
-  return UrlUtils.resolveUrls([
-    sourceUrl,
-    ...baseUrls.filter((u): u is string => u != null),
-  ]);
 }
 
 function resolvePeriodDuration(
