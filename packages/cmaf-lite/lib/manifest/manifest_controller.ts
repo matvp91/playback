@@ -16,12 +16,14 @@ export class ManifestController {
   private sourceUrl_: string | null = null;
   private request_: NetworkRequest | null = null;
   private timer_ = new Timer(() => this.fetchAndApply_());
+  private destroyed_ = false;
 
   constructor(private player_: Player) {
     this.player_.on(Events.MANIFEST_LOADING, this.onManifestLoading_);
   }
 
   destroy() {
+    this.destroyed_ = true;
     const networkService = this.player_.getNetworkService();
     if (this.request_) {
       networkService.cancel(this.request_);
@@ -46,26 +48,43 @@ export class ManifestController {
       config.manifestRequestOptions,
     );
 
-    const response = await this.request_.promise;
-    if (response === ABORTED) {
-      this.scheduleNext_();
-      return;
-    }
+    try {
+      const response = await this.request_.promise;
+      if (this.destroyed_) {
+        return;
+      }
+      if (response === ABORTED) {
+        this.scheduleNext_();
+        return;
+      }
 
-    if (!this.manifest_) {
-      this.manifest_ = DashParser.create(response.text, response.request.url);
-      log.info("Manifest created", this.manifest_);
-      this.player_.emit(Events.MANIFEST_CREATED, { manifest: this.manifest_ });
-    } else {
-      DashParser.update(this.manifest_, response.text, response.request.url);
-      log.info("Manifest updated", this.manifest_);
-      this.player_.emit(Events.MANIFEST_UPDATED, { manifest: this.manifest_ });
+      if (!this.manifest_) {
+        this.manifest_ = DashParser.create(response.text, response.request.url);
+        log.info("Manifest created", this.manifest_);
+        this.player_.emit(Events.MANIFEST_CREATED, {
+          manifest: this.manifest_,
+        });
+      } else {
+        DashParser.update(this.manifest_, response.text, response.request.url);
+        log.info("Manifest updated", this.manifest_);
+        this.player_.emit(Events.MANIFEST_UPDATED, {
+          manifest: this.manifest_,
+        });
+      }
+    } catch (error) {
+      if (this.destroyed_) {
+        return;
+      }
+      log.info("Manifest fetch failed", error);
     }
 
     this.scheduleNext_();
   };
 
   private scheduleNext_() {
+    if (this.destroyed_) {
+      return;
+    }
     if (this.manifest_?.isLive) {
       this.timer_.tickAfter(this.player_.getConfig().liveUpdateTime);
     }
