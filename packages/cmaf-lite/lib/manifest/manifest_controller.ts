@@ -31,6 +31,10 @@ export class ManifestController {
     this.player_.off(Events.MANIFEST_LOADING, this.onManifestLoading_);
   }
 
+  getManifest() {
+    return this.manifest_;
+  }
+
   private onManifestLoading_ = (event: ManifestLoadingEvent) => {
     this.timer_ = new Timer(() => this.fetch_(event.url)).tickNow();
   };

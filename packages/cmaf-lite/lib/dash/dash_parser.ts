@@ -1,5 +1,6 @@
 import { processUriTemplate } from "@svta/cml-dash";
 import type * as txml from "txml";
+import { EMPTY_MANIFEST } from "../constants";
 import type { Manifest, Segment, SwitchingSet, Track } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
@@ -26,12 +27,8 @@ type ReadContext = {
 };
 
 export function create(text: string, sourceUrl: string): Manifest {
-  const manifest: Manifest = {
-    start: 0,
-    end: 0,
-    isLive: false,
-    switchingSets: [],
-  };
+  // Deep copy an empty manifest and use that as the stable manifest base.
+  const manifest = structuredClone(EMPTY_MANIFEST);
   const mpd = XmlUtils.parseXml(text, "MPD");
   readMpd(manifest, mpd, sourceUrl, false);
   return manifest;

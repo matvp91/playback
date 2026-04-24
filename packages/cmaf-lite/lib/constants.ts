@@ -1,3 +1,5 @@
+import type { Manifest } from "./types/manifest";
+
 export const EMPTY_ARRAY = [];
 
 export const EMPTY_TIME_RANGES: TimeRanges = {
@@ -8,4 +10,11 @@ export const EMPTY_TIME_RANGES: TimeRanges = {
   end: (_index: number) => {
     throw new DOMException("IndexSizeError");
   },
+};
+
+export const EMPTY_MANIFEST: Manifest = {
+  isLive: false,
+  start: 0,
+  end: 0,
+  switchingSets: [],
 };
