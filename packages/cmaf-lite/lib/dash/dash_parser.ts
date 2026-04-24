@@ -8,15 +8,7 @@ import * as Functional from "../utils/functional";
 import * as ManifestUtils from "../utils/manifest_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
-import {
-  resolveBaseUrl,
-  resolveCodec,
-  resolveLanguage,
-  resolvePeriodDuration,
-  resolveSegmentTemplate,
-  resolveTiming,
-  resolveType,
-} from "./dash_helpers";
+import * as DashHelpers from "./dash_helpers";
 
 type ReadContext = {
   manifest: Manifest;
@@ -61,7 +53,7 @@ function readMpd(
 
   const type = XmlUtils.attr(mpd, "type", XmlUtils.parseString);
   manifest.isLive = type === "dynamic";
-  const timing = resolveTiming(manifest.switchingSets);
+  const timing = DashHelpers.resolveTiming(manifest.switchingSets);
   manifest.start = timing.firstSegmentStart;
   manifest.end = timing.lastSegmentEnd;
 }
@@ -74,7 +66,11 @@ function readPeriod(
 ): void {
   const period = periods[periodIndex];
   asserts.assertExists(period, "Period not found");
-  const periodDuration = resolvePeriodDuration(mpd, periods, periodIndex);
+  const periodDuration = DashHelpers.resolvePeriodDuration(
+    mpd,
+    periods,
+    periodIndex,
+  );
 
   for (const adaptationSet of XmlUtils.children(period, "AdaptationSet")) {
     readAdaptationSet(ctx, mpd, period, adaptationSet, periodDuration);
@@ -208,19 +204,19 @@ function getAdaptationSetId(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): string {
-  const type = resolveType(adaptationSet, representations);
-  const codec = resolveCodec(adaptationSet, representations);
+  const type = DashHelpers.resolveType(adaptationSet, representations);
+  const codec = DashHelpers.resolveCodec(adaptationSet, representations);
   const id = `${type}:${codec}`;
 
   if (type === MediaType.VIDEO) {
     return id;
   }
   if (type === MediaType.AUDIO) {
-    const language = resolveLanguage(adaptationSet);
+    const language = DashHelpers.resolveLanguage(adaptationSet);
     return `${id}:${language}`;
   }
   if (type === MediaType.SUBTITLE) {
-    const language = resolveLanguage(adaptationSet);
+    const language = DashHelpers.resolveLanguage(adaptationSet);
     return `${id}:${language}`;
   }
   throw new Error("Unsupported media type");
@@ -231,8 +227,8 @@ function parseAdaptationSet(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
-  const type = resolveType(adaptationSet, representations);
-  const codec = resolveCodec(adaptationSet, representations);
+  const type = DashHelpers.resolveType(adaptationSet, representations);
+  const codec = DashHelpers.resolveCodec(adaptationSet, representations);
 
   if (type === MediaType.VIDEO) {
     return {
@@ -243,7 +239,7 @@ function parseAdaptationSet(
     };
   }
   if (type === MediaType.AUDIO) {
-    const language = resolveLanguage(adaptationSet);
+    const language = DashHelpers.resolveLanguage(adaptationSet);
     return {
       id,
       type,
@@ -253,7 +249,7 @@ function parseAdaptationSet(
     };
   }
   if (type === MediaType.SUBTITLE) {
-    const language = resolveLanguage(adaptationSet);
+    const language = DashHelpers.resolveLanguage(adaptationSet);
     return {
       id,
       type,
@@ -316,23 +312,24 @@ function appendSegments(
   periodDuration: number | null,
   startAfter: number,
 ): { maxSegmentDuration: number; firstAvailableStart: number } {
-  const baseUrl = resolveBaseUrl(
+  const baseUrl = DashHelpers.resolveBaseUrl(
     ctx.sourceUrl,
     mpd,
     period,
     adaptationSet,
     representation,
   );
+
+  const segmentTemplate = DashHelpers.resolveSegmentTemplate(
+    period,
+    adaptationSet,
+    representation,
+  );
+
   const bandwidth = XmlUtils.attrRequired(
     representation,
     "bandwidth",
     XmlUtils.parseNumber,
-  );
-
-  const segmentTemplate = resolveSegmentTemplate(
-    period,
-    adaptationSet,
-    representation,
   );
 
   const initialization = XmlUtils.attrRequired(
@@ -340,11 +337,13 @@ function appendSegments(
     "initialization",
     XmlUtils.parseString,
   );
+
   const media = XmlUtils.attrRequired(
     segmentTemplate,
     "media",
     XmlUtils.parseString,
   );
+
   const id = XmlUtils.attrRequired(representation, "id", XmlUtils.parseString);
 
   const timescale = XmlUtils.attr(
