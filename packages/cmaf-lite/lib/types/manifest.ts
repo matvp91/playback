@@ -21,6 +21,8 @@ export interface Manifest {
   end: number;
   /** Groups of switchable tracks. */
   switchingSets: SwitchingSet[];
+  /** Base time in UTC */
+  baseDateTime?: Date;
 }
 
 /**

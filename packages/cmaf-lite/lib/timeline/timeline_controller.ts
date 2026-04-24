@@ -48,6 +48,15 @@ export class TimelineController {
       get currentTime() {
         return self.media_?.currentTime ?? NaN;
       },
+      get currentDate() {
+        const baseDateTime = self.manifest_?.baseDateTime;
+        if (!baseDateTime) {
+          return null;
+        }
+        return new Date(
+          baseDateTime.getTime() + Math.floor(timeline.currentTime * 1000),
+        );
+      },
       seekTo(time: number) {
         if (!self.media_) {
           return;
