@@ -130,7 +130,7 @@ function readRepresentation(
     startAfter,
   );
   if (ctx.isUpdate) {
-    ManifestUtils.pruneSegments(
+    ManifestUtils.evictSegments(
       track.segments,
       periodStart,
       firstAvailableStart,
