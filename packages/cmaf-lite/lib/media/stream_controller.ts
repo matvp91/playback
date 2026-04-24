@@ -390,7 +390,8 @@ export class StreamController {
   }
 
   private checkEndOfStream_() {
-    const allDone = [...this.mediaStates_.values()].every((ms) => ms.ended);
+    const mediaStates = Array.from(this.mediaStates_.values());
+    const allDone = mediaStates.every((ms) => ms.ended);
     if (allDone) {
       this.player_.emit(Events.BUFFER_EOS);
     }

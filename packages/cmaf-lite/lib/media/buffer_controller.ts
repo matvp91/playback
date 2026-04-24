@@ -258,7 +258,7 @@ export class BufferController {
    * the callback runs immediately.
    */
   private blockUntil(callback: () => void) {
-    const types = [...this.sourceBuffers_.keys()];
+    const types = Array.from(this.sourceBuffers_.keys());
     const blockers = types.map((type) => this.opQueue_.block(type));
     Promise.all(blockers).then(() => {
       callback();
