@@ -1,7 +1,7 @@
 import type {
   AdaptationEvent,
   BufferFlushedEvent,
-  ManifestParsedEvent,
+  ManifestUpdatedEvent,
   MediaAttachedEvent,
 } from "../events";
 import { Events } from "../events";
@@ -33,13 +33,14 @@ type MediaState = {
 };
 
 export class StreamController {
+  private isLive_ = false;
   private streamsMap_ = new Map<MediaType, Stream[]>();
   private streams_ = new Map<MediaType, Stream>();
   private media_: HTMLMediaElement | null = null;
   private mediaStates_ = new Map<MediaType, MediaState>();
 
   constructor(private player_: Player) {
-    this.player_.on(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.on(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -68,7 +69,7 @@ export class StreamController {
       }
       mediaState.timer.stop();
     }
-    this.player_.off(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.off(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
@@ -76,11 +77,14 @@ export class StreamController {
     this.mediaStates_.clear();
   }
 
-  private onManifestParsed_ = (event: ManifestParsedEvent) => {
-    this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
-    log.info("Streams", this.streamsMap_);
-    this.player_.emit(Events.STREAMS_UPDATED);
-    this.tryStart_();
+  private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
+    this.isLive_ = event.manifest.isLive;
+    if (!event.isUpdate) {
+      this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
+      log.info("Streams", this.streamsMap_);
+      this.player_.emit(Events.STREAMS_CREATED);
+      this.tryStart_();
+    }
   };
 
   private onMediaAttached_ = (event: MediaAttachedEvent) => {
@@ -157,6 +161,18 @@ export class StreamController {
     this.media_ = null;
   };
 
+  private getInitialTime_(): number {
+    if (!this.isLive_) {
+      return 0;
+    }
+    const stream = this.getReferenceStream();
+    const { segments } = stream.hierarchy.track;
+    const liveEdge = segments.at(-1)?.end ?? 0;
+    const firstSegmentStart = segments[0]?.start ?? 0;
+    const { liveDelay } = this.player_.getConfig();
+    return Math.max(liveEdge - liveDelay, firstSegmentStart);
+  }
+
   private resolveStream_(type: MediaType, streams: Stream[]): Stream {
     asserts.assertExists(streams[0], "No Streams");
     const { preferences } = this.player_.getConfig();
@@ -221,6 +237,10 @@ export class StreamController {
       });
     }
 
+    if (this.media_) {
+      this.media_.currentTime = this.getInitialTime_();
+    }
+
     for (const mediaState of this.mediaStates_.values()) {
       mediaState.timer.tickEvery(TICK_INTERVAL);
     }
@@ -266,14 +286,16 @@ export class StreamController {
     }
 
     if (!segment) {
-      mediaState.ended = true;
-      this.checkEndOfStream_();
+      if (!this.isLive_) {
+        mediaState.ended = true;
+        this.checkEndOfStream_();
+      }
       return;
     }
 
     if (segment.initSegment !== mediaState.lastInitSegment) {
       this.loadSegment_(mediaState, segment.initSegment);
-    } else {
+    } else if (segment !== mediaState.lastSegment) {
       this.loadSegment_(mediaState, segment);
     }
   }
@@ -354,6 +376,9 @@ export class StreamController {
   }
 
   private isEnded_(mediaState: MediaState, stream: Stream): boolean {
+    if (this.isLive_) {
+      return false;
+    }
     if (!mediaState.lastSegment) {
       return false;
     }
@@ -379,6 +404,13 @@ export class StreamController {
       this.update_(mediaState);
     }
   };
+
+  private getReferenceStream() {
+    const stream =
+      this.streams_.get(MediaType.VIDEO) ?? this.streams_.get(MediaType.AUDIO);
+    asserts.assertExists(stream, "No reference stream found");
+    return stream;
+  }
 }
 
 function isAV(type: MediaType) {

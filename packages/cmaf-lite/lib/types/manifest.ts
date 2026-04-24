@@ -13,8 +13,12 @@ export const LANGUAGE_UNKNOWN = "unk";
  * @public
  */
 export interface Manifest {
-  /** Total duration in seconds. */
-  duration: number;
+  /** True if the presentation is live (dynamic); false for on-demand (static). */
+  isLive: boolean;
+  /** Presentation start */
+  start: number;
+  /** Presenation end */
+  end: number;
   /** Groups of switchable tracks. */
   switchingSets: SwitchingSet[];
 }

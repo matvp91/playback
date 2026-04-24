@@ -140,22 +140,15 @@ export function resolvePeriodDuration(
   return null;
 }
 
-export function resolveDuration(
-  mpd: txml.TNode,
-  switchingSets: SwitchingSet[],
-): number {
-  const mpdDuration = XmlUtils.attr(
-    mpd,
-    "mediaPresentationDuration",
-    XmlUtils.parseDuration,
-  );
-  if (mpdDuration != null) {
-    return mpdDuration;
-  }
-
+export function resolveTiming(switchingSets: SwitchingSet[]) {
   const lastSegmentEnd = switchingSets[0]?.tracks[0]?.segments.at(-1)?.end;
-  asserts.assertExists(lastSegmentEnd, "Cannot resolve duration");
-  return lastSegmentEnd;
+  asserts.assertExists(lastSegmentEnd, "Cannot resolve end");
+  const firstSegmentStart = switchingSets[0]?.tracks[0]?.segments.at(0)?.start;
+  asserts.assertExists(firstSegmentStart, "Cannot resolve start");
+  return {
+    firstSegmentStart,
+    lastSegmentEnd,
+  };
 }
 
 export function resolveLanguage(node: txml.TNode) {

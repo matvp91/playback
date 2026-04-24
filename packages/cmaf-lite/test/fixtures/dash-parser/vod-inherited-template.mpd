@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="PT12S">
+  <Period>
+    <SegmentTemplate timescale="1000" startNumber="5" duration="4000" presentationTimeOffset="8000" />
+    <AdaptationSet contentType="video" mimeType="video/mp4" codecs="avc1.64001f">
+      <SegmentTemplate media="v-$Number$.m4s" initialization="v-init.mp4" />
+      <Representation id="1" bandwidth="2000000" width="1920" height="1080" />
+    </AdaptationSet>
+  </Period>
+</MPD>

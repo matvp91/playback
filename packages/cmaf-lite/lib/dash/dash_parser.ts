@@ -1,38 +1,39 @@
 import { processUriTemplate } from "@svta/cml-dash";
 import type * as txml from "txml";
-import type {
-  InitSegment,
-  Manifest,
-  Segment,
-  SwitchingSet,
-  Track,
-} from "../types/manifest";
+import type { Manifest, Segment, SwitchingSet, Track } from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
+import * as ManifestUtils from "../utils/manifest_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import {
   resolveBaseUrl,
   resolveCodec,
-  resolveDuration,
   resolveLanguage,
   resolvePeriodDuration,
   resolveSegmentTemplate,
+  resolveTiming,
   resolveType,
 } from "./dash_helpers";
 
 type ReadContext = {
-  sets: SwitchingSet[];
+  manifest: Manifest;
   switchingSetsById: Map<string, SwitchingSet>;
   tracksById: Map<string, Track>;
   sourceUrl: string;
+  isUpdate: boolean;
 };
 
 export function create(text: string, sourceUrl: string): Manifest {
-  const manifest: Manifest = { duration: 0, switchingSets: [] };
+  const manifest: Manifest = {
+    start: 0,
+    end: 0,
+    isLive: false,
+    switchingSets: [],
+  };
   const mpd = XmlUtils.parseXml(text, "MPD");
-  readMpd(manifest, mpd, sourceUrl);
+  readMpd(manifest, mpd, sourceUrl, false);
   return manifest;
 }
 
@@ -42,21 +43,30 @@ export function update(
   sourceUrl: string,
 ): void {
   const mpd = XmlUtils.parseXml(text, "MPD");
-  readMpd(manifest, mpd, sourceUrl);
+  readMpd(manifest, mpd, sourceUrl, true);
 }
 
-function readMpd(manifest: Manifest, mpd: txml.TNode, sourceUrl: string): void {
+function readMpd(
+  manifest: Manifest,
+  mpd: txml.TNode,
+  sourceUrl: string,
+  isUpdate: boolean,
+): void {
   const periods = XmlUtils.children(mpd, "Period");
   if (periods.length === 0) {
     throw new Error("No Period found in manifest");
   }
 
-  const ctx = createContext(manifest, sourceUrl);
+  const ctx = createContext(manifest, sourceUrl, isUpdate);
   for (let i = 0; i < periods.length; i++) {
     readPeriod(ctx, mpd, periods, i);
   }
 
-  manifest.duration = resolveDuration(mpd, manifest.switchingSets);
+  const type = XmlUtils.attr(mpd, "type", XmlUtils.parseString);
+  manifest.isLive = type === "dynamic";
+  const timing = resolveTiming(manifest.switchingSets);
+  manifest.start = timing.firstSegmentStart;
+  manifest.end = timing.lastSegmentEnd;
 }
 
 function readPeriod(
@@ -111,24 +121,45 @@ function readRepresentation(
   periodDuration: number | null,
 ): void {
   const track = upsertTrack(ctx, switchingSet, adaptationSet, representation);
-  const max = appendSegments(
-    track.segments,
+  const startAfter = ctx.isUpdate
+    ? (track.segments.at(-1)?.start ?? -Infinity)
+    : -Infinity;
+  const periodStart = XmlUtils.attr(period, "start", XmlUtils.parseDuration, 0);
+  const { maxSegmentDuration, firstAvailableStart } = appendSegments(
     ctx,
+    track.segments,
     mpd,
     period,
     adaptationSet,
     representation,
+    periodStart,
     periodDuration,
+    startAfter,
   );
-  track.maxSegmentDuration = Math.max(track.maxSegmentDuration, max);
+  if (ctx.isUpdate) {
+    ManifestUtils.pruneSegments(
+      track.segments,
+      periodStart,
+      firstAvailableStart,
+    );
+  }
+  track.maxSegmentDuration = Math.max(
+    track.maxSegmentDuration,
+    maxSegmentDuration,
+  );
 }
 
-function createContext(manifest: Manifest, sourceUrl: string): ReadContext {
+function createContext(
+  manifest: Manifest,
+  sourceUrl: string,
+  isUpdate: boolean,
+): ReadContext {
   const ctx: ReadContext = {
-    sets: manifest.switchingSets,
+    manifest,
     switchingSetsById: new Map(),
     tracksById: new Map(),
     sourceUrl,
+    isUpdate,
   };
   for (const switchingSet of manifest.switchingSets) {
     ctx.switchingSetsById.set(switchingSet.id, switchingSet);
@@ -144,10 +175,11 @@ function upsertSwitchingSet(
   adaptationSet: txml.TNode,
   representations: txml.TNode[],
 ): SwitchingSet {
+  const { switchingSets } = ctx.manifest;
   const id = getAdaptationSetId(adaptationSet, representations);
   return ctx.switchingSetsById.getOrInsertComputed(id, () => {
     const switchingSet = parseAdaptationSet(id, adaptationSet, representations);
-    ctx.sets.push(switchingSet);
+    switchingSets.push(switchingSet);
     return switchingSet;
   });
 }
@@ -277,14 +309,16 @@ function buildTrack(
 }
 
 function appendSegments(
-  target: Segment[],
   ctx: ReadContext,
+  target: Segment[],
   mpd: txml.TNode,
   period: txml.TNode,
   adaptationSet: txml.TNode,
   representation: txml.TNode,
+  periodStart: number,
   periodDuration: number | null,
-): number {
+  startAfter: number,
+): { maxSegmentDuration: number; firstAvailableStart: number } {
   const baseUrl = resolveBaseUrl(
     ctx.sourceUrl,
     mpd,
@@ -334,27 +368,38 @@ function appendSegments(
     XmlUtils.parseNumber,
     0,
   );
-  const periodStart = XmlUtils.attr(period, "start", XmlUtils.parseDuration, 0);
 
-  const uri = processUriTemplate(
-    initialization,
-    id,
-    null,
-    null,
-    bandwidth,
-    null,
-  );
-  const initSegment: InitSegment = {
-    url: UrlUtils.resolveUrl(uri, baseUrl),
-  };
+  // If we have segments, we'll preserve the initSegment to keep a stable
+  // reference to it.
+  let initSegment = target[0]?.initSegment;
+  if (!initSegment) {
+    const uri = processUriTemplate(
+      initialization,
+      id,
+      null,
+      null,
+      bandwidth,
+      null,
+    );
+    const url = UrlUtils.resolveUrl(uri, baseUrl);
+    initSegment = { url };
+  }
 
   let maxSegmentDuration = 0;
 
   const timeline = XmlUtils.child(segmentTemplate, "SegmentTimeline");
   if (timeline) {
+    const entries = XmlUtils.children(timeline, "S");
+    const firstT = entries[0]
+      ? XmlUtils.attr(entries[0], "t", XmlUtils.parseNumber, 0)
+      : 0;
+    const firstAvailableStart = entries[0]
+      ? (firstT - presentationTimeOffset) / timescale + periodStart
+      : periodStart;
+
     let time = 0;
     let number = startNumber;
-    for (const timelineEntry of XmlUtils.children(timeline, "S")) {
+    for (const timelineEntry of entries) {
       const duration = XmlUtils.attrRequired(
         timelineEntry,
         "d",
@@ -364,7 +409,17 @@ function appendSegments(
       time = XmlUtils.attr(timelineEntry, "t", XmlUtils.parseNumber, time);
 
       for (let i = 0; i <= repeat; i++) {
-        const uri = processUriTemplate(
+        const start = (time - presentationTimeOffset) / timescale + periodStart;
+        const end =
+          (time - presentationTimeOffset + duration) / timescale + periodStart;
+
+        if (start <= startAfter) {
+          time += duration;
+          number++;
+          continue;
+        }
+
+        const segmentUri = processUriTemplate(
           media,
           id,
           number,
@@ -372,11 +427,7 @@ function appendSegments(
           bandwidth,
           time,
         );
-
-        const url = UrlUtils.resolveUrl(uri, baseUrl);
-        const start = (time - presentationTimeOffset) / timescale + periodStart;
-        const end =
-          (time - presentationTimeOffset + duration) / timescale + periodStart;
+        const url = UrlUtils.resolveUrl(segmentUri, baseUrl);
 
         target.push({ url, start, end, initSegment });
 
@@ -386,7 +437,7 @@ function appendSegments(
       }
     }
 
-    return maxSegmentDuration;
+    return { maxSegmentDuration, firstAvailableStart };
   }
 
   asserts.assertExists(
@@ -400,18 +451,33 @@ function appendSegments(
     XmlUtils.parseNumber,
   );
 
+  const firstAvailableStart =
+    (0 - presentationTimeOffset) / timescale + periodStart;
+
   const count = Math.ceil(periodDuration / (duration / timescale));
   for (let i = 0; i < count; i++) {
     const number = startNumber + i;
     const time = i * duration;
-    const uri = processUriTemplate(media, id, number, null, bandwidth, time);
-    const url = UrlUtils.resolveUrl(uri, baseUrl);
     const start = (time - presentationTimeOffset) / timescale + periodStart;
     const end =
       (time - presentationTimeOffset + duration) / timescale + periodStart;
+
+    if (start <= startAfter) {
+      continue;
+    }
+
+    const segmentUri = processUriTemplate(
+      media,
+      id,
+      number,
+      null,
+      bandwidth,
+      time,
+    );
+    const url = UrlUtils.resolveUrl(segmentUri, baseUrl);
     target.push({ url, start, end, initSegment });
     maxSegmentDuration = Math.max(maxSegmentDuration, end - start);
   }
 
-  return maxSegmentDuration;
+  return { maxSegmentDuration, firstAvailableStart };
 }

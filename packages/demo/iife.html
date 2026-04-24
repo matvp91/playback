@@ -1,0 +1,14 @@
+<html lang="en">
+  <body>
+    <!-- biome-ignore lint/a11y/useMediaCaption: MSE -->
+    <video id="videoElement"></video>
+    <script src="../cmaf-lite/dist/main.iife.es5.js"></script>
+    <script>
+    const player = new cmafLite.Player();
+    player.attachMedia(document.getElementById("videoElement"));
+    player.load(
+      "https://divudqsyr5kmn.cloudfront.net/cmaf/bbb-avc-av1/bbb_sunflower_2160p_30fps.mpd",
+    );
+    </script>
+  </body>
+</html>

@@ -3,12 +3,12 @@ import type {
   BufferAppendingEvent,
   BufferCodecsEvent,
   BufferFlushEvent,
-  ManifestParsedEvent,
+  ManifestUpdatedEvent,
   MediaAttachingEvent,
 } from "../events";
 import { Events } from "../events";
 import type { Player } from "../player";
-import type { InitSegment, Manifest, Segment } from "../types/manifest";
+import type { InitSegment, Segment } from "../types/manifest";
 import type { SourceBufferMediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as CodecUtils from "../utils/codec_utils";
@@ -32,13 +32,13 @@ export class BufferController {
   private initSegmentInfo_ = new Map<InitSegment, InitSegmentInfo>();
   private segmentTracker_ = new SegmentTracker();
   private quotaEvictionPending_ = new Set<SourceBufferMediaType>();
-  private manifest_: Manifest | null = null;
+  private duration_: number | null = null;
   private objectUrl_: string | null = null;
 
   constructor(private player_: Player) {
     this.player_.on(Events.MEDIA_ATTACHING, this.onMediaAttaching_);
     this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-    this.player_.on(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.on(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.on(Events.BUFFER_CODECS, this.onBufferCodecs_);
     this.player_.on(Events.BUFFER_APPENDING, this.onBufferAppending_);
     this.player_.on(Events.BUFFER_EOS, this.onBufferEos_);
@@ -56,7 +56,7 @@ export class BufferController {
   destroy() {
     this.player_.off(Events.MEDIA_ATTACHING, this.onMediaAttaching_);
     this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-    this.player_.off(Events.MANIFEST_PARSED, this.onManifestParsed_);
+    this.player_.off(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.off(Events.BUFFER_CODECS, this.onBufferCodecs_);
     this.player_.off(Events.BUFFER_APPENDING, this.onBufferAppending_);
     this.player_.off(Events.BUFFER_EOS, this.onBufferEos_);
@@ -71,7 +71,7 @@ export class BufferController {
       this.objectUrl_ = null;
     }
     this.mediaSource_ = null;
-    this.manifest_ = null;
+    this.duration_ = null;
   }
 
   getBuffered(type: SourceBufferMediaType): TimeRanges | null {
@@ -85,8 +85,8 @@ export class BufferController {
     this.opQueue_.enqueue(type, this.getFlushOperation_(type, 0, Infinity));
   };
 
-  private onManifestParsed_ = (event: ManifestParsedEvent) => {
-    this.manifest_ = event.manifest;
+  private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
+    this.duration_ = event.manifest.end;
     this.updateDuration_();
   };
 
@@ -269,15 +269,15 @@ export class BufferController {
   }
 
   /**
-   * Set mediaSource.duration from the manifest. Uses
-   * blockUntil to avoid InvalidStateError when a
-   * SourceBuffer is updating.
+   * Apply the cached duration to mediaSource.duration. Uses
+   * blockUntil to avoid InvalidStateError when a SourceBuffer
+   * is updating.
    */
   private updateDuration_() {
-    if (!this.manifest_ || this.mediaSource_?.readyState !== "open") {
+    if (this.duration_ === null || this.mediaSource_?.readyState !== "open") {
       return;
     }
-    const duration = this.manifest_.duration;
+    const duration = this.duration_;
     if (this.mediaSource_.duration === duration) {
       return;
     }
