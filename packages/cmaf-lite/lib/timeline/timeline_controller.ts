@@ -3,34 +3,14 @@ import { Events } from "../events";
 import type { Player } from "../player";
 import type { Manifest } from "../types/manifest";
 import type { Timeline } from "../types/media";
+import * as MathUtils from "../utils/math_utils";
 
 export class TimelineController {
   private manifest_: Manifest | null = null;
   private media_: HTMLMediaElement | null = null;
-  private timeline_: Timeline;
+  private timeline_: Timeline | null = null;
 
   constructor(private player_: Player) {
-    const controller = this;
-    this.timeline_ = {
-      get start() {
-        return controller.manifest_?.start ?? 0;
-      },
-      get end() {
-        const manifest = controller.manifest_;
-        if (!manifest) {
-          return 0;
-        }
-        if (!manifest.isLive) {
-          return manifest.end;
-        }
-        const { liveDelay } = controller.player_.getConfig();
-        return Math.max(manifest.end - liveDelay, manifest.start);
-      },
-      get currentTime() {
-        return controller.media_?.currentTime ?? 0;
-      },
-    };
-
     this.player_.on(Events.MANIFEST_UPDATED, this.onManifestUpdated_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
@@ -44,7 +24,39 @@ export class TimelineController {
   }
 
   getTimeline() {
+    this.timeline_ ??= this.createTimeline_();
     return this.timeline_;
+  }
+
+  private createTimeline_(): Timeline {
+    const self = this;
+    const timeline = {
+      get start() {
+        return self.manifest_?.start ?? 0;
+      },
+      get end() {
+        const manifest = self.manifest_;
+        if (!manifest) {
+          return 0;
+        }
+        if (manifest.isLive) {
+          const { liveDelay } = self.player_.getConfig();
+          return Math.max(manifest.end - liveDelay, manifest.start);
+        }
+        return manifest.end;
+      },
+      get currentTime() {
+        return self.media_?.currentTime ?? NaN;
+      },
+      seekTo(time: number) {
+        if (!self.media_) {
+          return;
+        }
+        const clampedTime = MathUtils.clamp(time, timeline.start, timeline.end);
+        self.media_.currentTime = clampedTime;
+      },
+    };
+    return timeline;
   }
 
   private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
@@ -65,9 +77,11 @@ export class TimelineController {
   };
 
   private detachMedia_() {
-    this.media_?.removeEventListener("timeupdate", this.onTimeUpdate_);
-    this.media_?.removeEventListener("seeking", this.onTimeUpdate_);
-    this.media_ = null;
+    if (this.media_) {
+      this.media_.removeEventListener("timeupdate", this.onTimeUpdate_);
+      this.media_.removeEventListener("seeking", this.onTimeUpdate_);
+      this.media_ = null;
+    }
   }
 
   private onTimeUpdate_ = () => {

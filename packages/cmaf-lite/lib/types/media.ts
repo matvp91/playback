@@ -164,4 +164,6 @@ export type Timeline = {
   readonly end: number;
   /** Current playhead position, or `0` when no media is attached. */
   readonly currentTime: number;
+  /** Seek to time */
+  seekTo(time: number): void;
 };
