@@ -55,6 +55,9 @@ export class TimelineController {
         const clampedTime = MathUtils.clamp(time, timeline.start, timeline.end);
         self.media_.currentTime = clampedTime;
       },
+      get isLive() {
+        return self.manifest_?.isLive ?? false;
+      },
     };
     return timeline;
   }

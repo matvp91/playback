@@ -166,4 +166,6 @@ export type Timeline = {
   readonly currentTime: number;
   /** Seek to time */
   seekTo(time: number): void;
+  /** Is live? */
+  readonly isLive: boolean;
 };
