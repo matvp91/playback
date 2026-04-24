@@ -144,3 +144,28 @@ export type Preference<T extends MediaType = MediaType> = Extract<
     type: T;
   }
 >;
+
+/**
+ * Presentation timeline state. The object returned by
+ * {@link Player.getTimeline} is stable across calls; its fields
+ * compute on read, reflecting the current manifest, config, and
+ * media state without caching.
+ *
+ * @public
+ */
+export type Timeline = {
+  /** Presentation start (DVR start for live). */
+  readonly start: number;
+  /**
+   * Presentation end. For VOD this is the manifest end; for live
+   * this is the seekable end (`liveEdge - liveDelay`, clamped to
+   * `start`).
+   */
+  readonly end: number;
+  /** Current playhead position, or `0` when no media is attached. */
+  readonly currentTime: number;
+  /** Seek to time */
+  seekTo(time: number): void;
+  /** Is live? */
+  readonly isLive: boolean;
+};

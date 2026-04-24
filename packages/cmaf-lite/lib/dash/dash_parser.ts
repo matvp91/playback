@@ -56,6 +56,13 @@ function readMpd(
   const timing = DashHelpers.resolveTiming(manifest.switchingSets);
   manifest.start = timing.firstSegmentStart;
   manifest.end = timing.lastSegmentEnd;
+
+  const availabilityStartTime = XmlUtils.attr(
+    mpd,
+    "availabilityStartTime",
+    XmlUtils.parseDate,
+  );
+  manifest.baseDateTime = availabilityStartTime;
 }
 
 function readPeriod(
@@ -130,7 +137,7 @@ function readRepresentation(
     startAfter,
   );
   if (ctx.isUpdate) {
-    ManifestUtils.pruneSegments(
+    ManifestUtils.evictSegments(
       track.segments,
       periodStart,
       firstAvailableStart,

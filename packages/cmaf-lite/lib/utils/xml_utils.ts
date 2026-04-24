@@ -112,3 +112,9 @@ export function parseNumber(raw: string): number {
 export function parseDuration(raw: string): number {
   return decodeIso8601Duration(raw);
 }
+
+export function parseDate(raw: string): Date {
+  const date = new Date(raw);
+  asserts.assertNumber(date.getTime(), `Expected a date, got "${raw}"`);
+  return date;
+}
