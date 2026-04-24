@@ -48,7 +48,7 @@ export class TimelineController {
       get currentTime() {
         return self.media_?.currentTime ?? NaN;
       },
-      get currentDate() {
+      get currentDateTime() {
         const baseDateTime = self.manifest_?.baseDateTime;
         if (!baseDateTime) {
           return null;
