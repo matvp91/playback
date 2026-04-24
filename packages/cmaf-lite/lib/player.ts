@@ -10,6 +10,7 @@ import { BufferController } from "./media/buffer_controller";
 import { GapController } from "./media/gap_controller";
 import { StreamController } from "./media/stream_controller";
 import { NetworkService } from "./net/network_service";
+import { TimelineController } from "./timeline/timeline_controller";
 import type { DeepPartial } from "./types/helpers";
 import type { Stream } from "./types/media";
 import { MediaType } from "./types/media";
@@ -32,6 +33,7 @@ export class Player extends EventEmitter<EventMap> {
   private gapController_: GapController;
   private streamController_: StreamController;
   private abrController_: AbrController;
+  private timelineController_: TimelineController;
 
   constructor() {
     super();
@@ -43,6 +45,7 @@ export class Player extends EventEmitter<EventMap> {
     this.gapController_ = new GapController(this);
     this.streamController_ = new StreamController(this);
     this.abrController_ = new AbrController(this);
+    this.timelineController_ = new TimelineController(this);
   }
 
   /**
@@ -93,6 +96,15 @@ export class Player extends EventEmitter<EventMap> {
    */
   getManifest() {
     return this.manifestController_.getManifest() ?? EMPTY_MANIFEST;
+  }
+
+  /**
+   * Returns the presentation timeline. The returned object is stable
+   * across calls; its fields compute on read, so it always reflects
+   * the current manifest, config, and media state.
+   */
+  getTimeline() {
+    return this.timelineController_.getTimeline();
   }
 
   /**
@@ -167,6 +179,7 @@ export class Player extends EventEmitter<EventMap> {
     this.gapController_.destroy();
     this.streamController_.destroy();
     this.abrController_.destroy();
+    this.timelineController_.destroy();
     this.removeAllListeners();
   }
 }
