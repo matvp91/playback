@@ -34,6 +34,8 @@ type MediaState = {
 
 export class StreamController {
   private isLive_ = false;
+  private rangeStart_ = 0;
+  private rangeEnd_ = 0;
   private streamsMap_ = new Map<MediaType, Stream[]>();
   private streams_ = new Map<MediaType, Stream>();
   private media_: HTMLMediaElement | null = null;
@@ -78,8 +80,13 @@ export class StreamController {
   }
 
   private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
+    // Update manifest info.
     this.isLive_ = event.manifest.isLive;
+    this.rangeStart_ = event.manifest.start;
+    this.rangeEnd_ = event.manifest.end;
+
     if (!event.isUpdate) {
+      // The initial manifest can be processed.
       this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
       log.info("Streams", this.streamsMap_);
       this.player_.emit(Events.STREAMS_CREATED);
@@ -163,14 +170,10 @@ export class StreamController {
 
   private getInitialTime_(): number {
     if (!this.isLive_) {
-      return 0;
+      return this.rangeStart_;
     }
-    const stream = this.getReferenceStream();
-    const { segments } = stream.hierarchy.track;
-    const liveEdge = segments.at(-1)?.end ?? 0;
-    const firstSegmentStart = segments[0]?.start ?? 0;
     const { liveDelay } = this.player_.getConfig();
-    return Math.max(liveEdge - liveDelay, firstSegmentStart);
+    return Math.max(this.rangeEnd_ - liveDelay, this.rangeStart_);
   }
 
   private resolveStream_(type: MediaType, streams: Stream[]): Stream {
@@ -404,13 +407,6 @@ export class StreamController {
       this.update_(mediaState);
     }
   };
-
-  private getReferenceStream() {
-    const stream =
-      this.streams_.get(MediaType.VIDEO) ?? this.streams_.get(MediaType.AUDIO);
-    asserts.assertExists(stream, "No reference stream found");
-    return stream;
-  }
 }
 
 function isAV(type: MediaType) {

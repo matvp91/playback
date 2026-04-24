@@ -56,6 +56,13 @@ function readMpd(
   const timing = DashHelpers.resolveTiming(manifest.switchingSets);
   manifest.start = timing.firstSegmentStart;
   manifest.end = timing.lastSegmentEnd;
+
+  const availabilityStartTime = XmlUtils.attr(
+    mpd,
+    "availabilityStartTime",
+    XmlUtils.parseDate,
+  );
+  manifest.baseDateTime = availabilityStartTime;
 }
 
 function readPeriod(

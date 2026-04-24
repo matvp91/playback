@@ -33,6 +33,7 @@ export const Events = {
   STREAMS_CREATED: "streamsCreated",
   STREAM_CHANGED: "streamChanged",
   ADAPTATION: "adaptation",
+  TIMELINE_UPDATED: "timelineUpdated",
   NETWORK_REQUEST: "networkRequest",
   NETWORK_RESPONSE: "networkResponse",
 } as const;
@@ -213,6 +214,7 @@ export interface EventMap {
   [Events.STREAMS_CREATED]: undefined;
   [Events.STREAM_CHANGED]: (event: StreamChangedEvent) => void;
   [Events.ADAPTATION]: (event: AdaptationEvent) => void;
+  [Events.TIMELINE_UPDATED]: undefined;
   [Events.NETWORK_REQUEST]: (event: NetworkRequestEvent) => void;
   [Events.NETWORK_RESPONSE]: (event: NetworkResponseEvent) => void;
 }
