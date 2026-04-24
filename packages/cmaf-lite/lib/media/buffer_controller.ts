@@ -86,7 +86,7 @@ export class BufferController {
   };
 
   private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
-    this.duration_ = event.manifest.isLive ? 2 ** 32 : event.manifest.duration;
+    this.duration_ = event.manifest.end;
     this.updateDuration_();
   };
 

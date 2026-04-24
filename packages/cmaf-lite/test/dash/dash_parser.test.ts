@@ -13,7 +13,8 @@ describe("DashParser", () => {
         loadFixture("dash-parser/vod-basic.mpd"),
         sourceUrl,
       );
-      expect(manifest.duration).toBe(60);
+      expect(manifest.start).toBe(0);
+      expect(manifest.end).toBe(60);
       expect(manifest.switchingSets).toHaveLength(2);
     });
 
@@ -190,7 +191,11 @@ describe("DashParser", () => {
         loadFixture("dash-parser/vod-multi-period.mpd"),
         sourceUrl,
       );
-      expect(manifest.duration).toBe(60);
+      expect(manifest.start).toBe(0);
+      // TODO(matvp): This used to be 60, but we no longer read mediaPresentationDuration.
+      // The idea is to read period duration and store it in the InitSegment struct as optional
+      // duration. If it's there, we can use it.
+      expect(manifest.end).toBe(62);
       expect(manifest.switchingSets).toHaveLength(2);
 
       const video = findVideo(manifest);

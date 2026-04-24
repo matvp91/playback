@@ -10,10 +10,10 @@ import * as XmlUtils from "../utils/xml_utils";
 import {
   resolveBaseUrl,
   resolveCodec,
-  resolveDuration,
   resolveLanguage,
   resolvePeriodDuration,
   resolveSegmentTemplate,
+  resolveTiming,
   resolveType,
 } from "./dash_helpers";
 
@@ -27,7 +27,8 @@ type ReadContext = {
 
 export function create(text: string, sourceUrl: string): Manifest {
   const manifest: Manifest = {
-    duration: 0,
+    start: 0,
+    end: 0,
     isLive: false,
     switchingSets: [],
   };
@@ -63,7 +64,9 @@ function readMpd(
 
   const type = XmlUtils.attr(mpd, "type", XmlUtils.parseString);
   manifest.isLive = type === "dynamic";
-  manifest.duration = resolveDuration(mpd, manifest.switchingSets);
+  const timing = resolveTiming(manifest.switchingSets);
+  manifest.start = timing.firstSegmentStart;
+  manifest.end = timing.lastSegmentEnd;
 }
 
 function readPeriod(
