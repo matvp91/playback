@@ -61,14 +61,17 @@ This spec applies the same lessons at cmaf-lite scale.
 
 ```
 AbrController (policy + wiring)
- ├── ThroughputDriver  — pure estimator. Owns Ewma state. No streams,
- │                       no events, no Player. Inputs: bandwidth
- │                       samples. Output: bits/s estimate.
- └── BolaDriver        — pure scorer. Owns BOLA params (lnS1, vM, Qmax,
-                         gp, V) cached against the bandwidth ladder.
-                         No events, no Player. Output: optimal index or
-                         null (startup abstain).
+ ├── ThroughputEstimator — class. Pure dual-EWMA estimator over a
+ │                         sample stream. Inputs: bandwidth samples.
+ │                         Output: bits/s estimate or null.
+ └── bolaScore()         — pure function. No state. Inputs: streams,
+                           buffer level, segment duration, front
+                           buffer length. Output: VideoStream or null.
 ```
+
+ThroughputEstimator is a class because it accumulates samples across
+calls (genuine state). BOLA is a pure function because its math is a
+snapshot — no history dependence in our simplified impl.
 
 Drivers are **pure logic objects** — testable in isolation, no event
 bus, no Player coupling. The controller does all wiring and all policy.
@@ -78,12 +81,12 @@ Per evaluation tick, the controller:
 1. Reads `bufferLevel`, `streams`, `activeStream`, config.
 2. Updates the active driver via hysteresis (see Driver Selection).
 3. If active driver is BOLA and `activeStream` exists:
-   `i = bola.getOptimalIndex(streams, activeStream, bufferLevel,
-   frontBufferLength)`. If non-null, `pick = streams[i]`.
+   `pick = bolaScore(streams, bufferLevel,
+   activeStream.hierarchy.track.maxSegmentDuration, frontBufferLength)`.
 4. If `pick` is still unresolved (active driver is Throughput, or BOLA
    abstained, or no active stream yet): run the throughput pick —
-   `bandwidth = throughput.getEstimate(default) - audioBandwidth`,
-   walk video streams, return highest stream fitting
+   `bandwidth = (throughput.getEstimate() ?? defaultBandwidthEstimate)
+   - audioBandwidth`, walk video streams, return highest stream fitting
    `bandwidth × {upgrade,downgrade}Target`, fall back to `streams[0]`.
 5. Emits `ADAPTATION` if `pick` differs from `activeStream`.
 
@@ -94,41 +97,35 @@ The controller subscribes to `NETWORK_RESPONSE` and forwards
 
 ```
 lib/abr/
-  abr_controller.ts      — orchestrator, event wiring, hysteresis
-  throughput_driver.ts   — Ewma + EwmaBandwidthEstimator + ThroughputDriver
-  bola_driver.ts         — BolaDriver
+  abr_controller.ts        — orchestrator, event wiring, hysteresis
+  throughput_estimator.ts  — Ewma (file-private) + ThroughputEstimator
+  bola_scorer.ts           — bolaScore() pure function
 ```
 
-Files removed: `ewma.ts`, `ewma_bandwidth_estimator.ts` (folded into
-`throughput_driver.ts` — only consumer).
+Files removed: `ewma.ts`, `ewma_bandwidth_estimator.ts` (their code
+moves into `throughput_estimator.ts`).
 
 ## Types
 
 ```ts
-// throughput_driver.ts (public surface)
-export class ThroughputDriver {
+// throughput_estimator.ts (public surface)
+export class ThroughputEstimator {
   constructor(config: AbrConfig);
   sample(durationSec: number, bytes: number): void;
-  getEstimate(defaultEstimate: number): number;
+  getEstimate(): number | null;       // null while undersampled
 }
 
-// bola_driver.ts (public surface)
-export class BolaDriver {
-  constructor();
-  // null = abstain (startup, below segment-duration buffer).
-  getOptimalIndex(
-    streams: VideoStream[],
-    activeStream: VideoStream,
-    bufferLevel: number,
-    frontBufferLength: number,
-  ): number | null;
-}
+// bola_scorer.ts (public surface)
+export function bolaScore(
+  streams: VideoStream[],
+  bufferLevel: number,
+  maxSegmentDuration: number,
+  frontBufferLength: number,
+): VideoStream | null;                 // null = abstain (startup)
 ```
 
-Neither driver takes the controller. ThroughputDriver receives samples
-through `sample()`; BolaDriver receives streams + state per call.
-Internal caching makes per-call ladder copies cheap (reference-equality
-check).
+Neither takes the controller. `ThroughputEstimator` receives samples
+through `sample()`; `bolaScore` receives all inputs by argument.
 
 ## Driver Selection
 
@@ -146,59 +143,102 @@ otherwise               → keep current driver
 Initial driver is `Throughput` (buffer is 0 at startup). The controller
 stores the current driver as a private field.
 
-## Throughput Driver
+## Throughput Estimator
 
-Combines today's `EwmaBandwidthEstimator` and `Ewma` into one
-self-contained module — pure estimator, no awareness of streams.
+Pure dual-EWMA estimator over bandwidth samples. No awareness of
+streams, events, or Player.
+
+File: `throughput_estimator.ts` contains:
+- `MIN_TOTAL_BYTES = 128_000` — file-private constant. The threshold
+  below which `getEstimate()` returns `null` (samples too sparse to
+  trust). Was `AbrConfig.minTotalBytes` (removed); now hardcoded.
+- `class Ewma` — file-private primitive. Weighted EWMA with bias
+  correction. Math unchanged from today's `lib/abr/ewma.ts`.
+- `class ThroughputEstimator` — exported. Wraps a fast and a slow
+  `Ewma`, samples in bits/s, gates on `MIN_TOTAL_BYTES`.
 
 State:
-- `Ewma` (fast and slow), wrapped in `EwmaBandwidthEstimator` —
-  unchanged math; both classes are now file-private to
-  `throughput_driver.ts`.
-- Total bytes counter (gates switching to the EWMA estimate).
+- `fast_: Ewma` (constructed with `config.fastHalfLife`).
+- `slow_: Ewma` (constructed with `config.slowHalfLife`).
+- `totalBytes_: number` — running sum of valid sample bytes.
 
 API:
-- `sample(durationSec, bytes)` — push a measurement.
-- `getEstimate(defaultEstimate)` — `min(fast, slow)` once
-  `totalBytes ≥ minTotalBytes`, else the default.
+```ts
+sample(durationSec: number, bytes: number): void
+  // Ignores invalid input (durationSec <= 0 || bytes <= 0).
+  // bps = (bytes * 8) / durationSec
+  // fast_.sample(durationSec, bps)
+  // slow_.sample(durationSec, bps)
+  // totalBytes_ += bytes
 
-No listeners; the controller calls `sample(...)` from its
-`NETWORK_RESPONSE` handler.
+getEstimate(): number | null
+  // null when totalBytes_ < MIN_TOTAL_BYTES (insufficient data).
+  // Otherwise: Math.min(fast_.getEstimate(), slow_.getEstimate()).
+```
 
-## BOLA Driver
+The `defaultBandwidthEstimate` fallback is the caller's responsibility:
+`AbrController` does `throughput.getEstimate() ?? defaultBandwidthEstimate`.
 
-Mechanically identical to today's `evaluateBola_`, repackaged as a pure
-scorer with internal caching.
+Config staleness: `fastHalfLife` and `slowHalfLife` are captured at
+construction and not re-read. This matches today's behavior. cmaf-lite
+allows `setConfig` at runtime, but EWMA half-lives changing
+mid-session is not a supported scenario.
 
-State (lazy, recomputed when `streams` reference or `frontBufferLength`
-changes):
-- Cached `streams` reference and `frontBufferLength` value.
-- Derived: `lnS1` (log of lowest bandwidth), `vM` (utility ceiling),
-  `Qmax = max(frontBufferLength, MINIMUM_BUFFER_S + 2 × streams.length)`,
-  `gp = (vM - 1) / (Qmax / MINIMUM_BUFFER_S - 1)`,
-  `V = MINIMUM_BUFFER_S / gp`.
+## BOLA Scorer
 
-`getOptimalIndex(streams, activeStream, bufferLevel, frontBufferLength)`:
-- If `bufferLevel < activeStream.hierarchy.track.maxSegmentDuration`,
-  return `null` (abstain — startup).
-- Recompute state if `streams` reference or `frontBufferLength`
-  changed.
-- For each stream `i`, compute
-  `score = (V × (vm_i - 1 + gp) - bufferLevel) / streams[i].bandwidth`,
-  where `vm_i = log(streams[i].bandwidth) - lnS1 + 1`.
-- Return the index of the highest-scoring stream.
+Mechanically identical to today's `evaluateBola_`, lifted into a pure
+function — no class, no state, no caching. Math is a snapshot of
+`(streams, bufferLevel, maxSegmentDuration, frontBufferLength)`.
 
-Constants stay inline (`MINIMUM_BUFFER_S = 10`).
+File: `bola_scorer.ts` contains:
+- `MINIMUM_BUFFER_S = 10` — file-private constant.
+- `bolaScore(...)` — exported pure function.
 
-Manifest objects have stable identity (per project DESIGN principles),
-so reference comparison is sufficient for cache invalidation.
+Algorithm (all derived params recomputed each call — cheap, ABR ticks
+at multi-second cadence):
+
+```ts
+export function bolaScore(streams, bufferLevel, maxSegmentDuration, frontBufferLength): VideoStream | null {
+  if (bufferLevel < maxSegmentDuration) return null;        // startup abstain
+  const lowest = streams[0];
+  const highest = streams[streams.length - 1];
+  if (!lowest || !highest) return null;
+
+  const lnS1 = Math.log(lowest.bandwidth);
+  const vM   = Math.log(highest.bandwidth) - lnS1 + 1;
+  const Qmax = Math.max(frontBufferLength, MINIMUM_BUFFER_S + 2 * streams.length);
+  const gp   = (vM - 1) / (Qmax / MINIMUM_BUFFER_S - 1);
+  const V    = MINIMUM_BUFFER_S / gp;
+
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  for (let i = 0; i < streams.length; i++) {
+    const vm = Math.log(streams[i].bandwidth) - lnS1 + 1;
+    const score = (V * (vm - 1 + gp) - bufferLevel) / streams[i].bandwidth;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+  return streams[bestIndex];
+}
+```
+
+Why no state? Three reasons we'd want state — none apply:
+- **Placeholder buffer** (deferred per Non-goals).
+- **Last-segment metadata** (only feeds placeholder buffer).
+- **Startup vs steady mode** — externalized to controller's hysteresis.
+
+If we add placeholder buffer or BOLA-O anti-oscillation later, the
+function gets promoted to a class. YAGNI now.
 
 ## AbrController
 
 Owns all event wiring and all policy. Drivers are pure helpers it owns.
 
 Responsibilities:
-- Construct `ThroughputDriver(abrConfig)` and `BolaDriver()`.
+- Construct `ThroughputEstimator(abrConfig)`. (No BOLA object — call
+  `bolaScore(...)` as a function.)
 - Subscribe to `STREAMS_CREATED` and `NETWORK_RESPONSE`. Forward
   segment responses to `throughput.sample(...)`.
 - Run the evaluation timer at `evaluationInterval`.
@@ -224,11 +264,11 @@ class AbrController {
 `destroy()` stops the timer and unbinds listeners. Drivers have no
 listeners and no `destroy()` of their own.
 
-Throughput-pick logic lives in a private controller method (~15 LOC):
+Throughput-pick logic lives in a private controller method:
 
 ```ts
 private pickFromThroughput_(streams, activeStream, abr) {
-  let bw = this.throughput_.getEstimate(abr.defaultBandwidthEstimate);
+  let bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
   const audio = this.player_.getActiveStream(MediaType.AUDIO);
   if (audio) bw -= audio.bandwidth;
 
@@ -249,20 +289,31 @@ private pickFromThroughput_(streams, activeStream, abr) {
 
 ## Config
 
-`AbrConfig` shape unchanged. `droppedFramesThreshold` retained in the
-config for now (no consumer in this refactor — restored when dropped
-frames returns). All other fields keep their meaning.
+`AbrConfig` changes:
+- **Removed:** `minTotalBytes` — moved into `throughput_estimator.ts`
+  as a hardcoded `MIN_TOTAL_BYTES = 128_000`. Same gating behavior as
+  today; just no longer user-configurable. `getEstimate()` returns
+  `null` while undersampled.
+- **Retained but unused in this refactor:** `droppedFramesThreshold` —
+  restored when dropped-frames handling returns in a follow-up.
+
+Other fields keep their meaning. `defaultBandwidthEstimate` is applied
+in `AbrController` (`throughput.getEstimate() ?? default`) rather than
+passed into the estimator.
+
+Update sites: `lib/config.ts` (interface + `DEFAULT_CONFIG`),
+`docs/abr.md`, any reference docs that mention `minTotalBytes`.
 
 ## Tests
 
 Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
 
-- `throughput_driver.test.ts` — dual-EWMA math, default estimate
-  before `minTotalBytes`, `min(fast, slow)` after.
-- `bola_driver.test.ts` — abstention below segment-duration buffer
-  (returns `null`), correct argmax across buffer levels, lazy state
-  recompute on `streams` reference change and on `frontBufferLength`
-  change.
+- `throughput_estimator.test.ts` — dual-EWMA math, `getEstimate()`
+  returns `null` while `totalBytes_ < MIN_TOTAL_BYTES`, `min(fast,
+  slow)` once over the threshold, invalid samples are ignored.
+- `bola_scorer.test.ts` — abstention below segment-duration buffer
+  (returns `null`), correct argmax across buffer levels, monotonic
+  preference shift toward higher streams as buffer grows.
 - `abr_controller.test.ts` — hysteresis transitions, BOLA-null
   fallback to throughput, throughput-pick logic (audio subtraction,
   upgrade/downgrade asymmetry, lowest-stream floor),
@@ -275,9 +326,11 @@ collapse into the new tests above.
 ## Migration
 
 - Delete `lib/abr/ewma.ts`, `lib/abr/ewma_bandwidth_estimator.ts` (code
-  moves into `throughput_driver.ts`).
+  moves into `throughput_estimator.ts`).
 - Replace `lib/abr/abr_controller.ts` with the slim orchestrator.
-- Add `lib/abr/throughput_driver.ts`, `lib/abr/bola_driver.ts`.
+- Add `lib/abr/throughput_estimator.ts`, `lib/abr/bola_scorer.ts`.
+- Remove `minTotalBytes` from `AbrConfig` and `DEFAULT_CONFIG` in
+  `lib/config.ts`.
 - Update `docs/abr.md` to describe drivers, not rules. Note dropped
   frames as deferred.
 - Update `docs/DESIGN.md` AbrController paragraph (currently mentions
