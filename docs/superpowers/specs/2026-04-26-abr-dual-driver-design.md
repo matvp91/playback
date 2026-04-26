@@ -46,6 +46,10 @@ This spec applies the same lessons at cmaf-lite scale.
 
 - Dropped-frames handling — removed in this refactor, restored in a
   follow-up session with per-stream history.
+- InsufficientBuffer rule — removed. The two-driver model with
+  buffer hysteresis already encodes the low-buffer safety case
+  (Throughput is the active driver below the low mark; fast EWMA
+  half-life reacts to sudden degradation within seconds).
 - Abandon-fragment rule — NetworkService has no in-flight progress
   events; deferred.
 - BOLA placeholder buffer — already noted as deferred in `docs/abr.md`.
@@ -131,21 +135,21 @@ stores the current driver as a private field.
 
 ## Throughput Driver
 
-Combines today's `EwmaBandwidthEstimator`, `Ewma`, the existing
-Throughput rule, and the InsufficientBuffer rule into one module:
+Combines today's `EwmaBandwidthEstimator`, `Ewma`, and the existing
+Throughput rule into one module:
 
 - **Estimator** — dual EWMA (`fastHalfLife`, `slowHalfLife`), `min(fast,
   slow)` — unchanged math.
-- **Steady-state decision** (`bufferLevel >= maxSegmentDuration`):
-  highest stream `≤ estimate × factor`, with asymmetric upgrade
-  (`bandwidthUpgradeTarget`) / downgrade (`bandwidthDowngradeTarget`).
-  Subtract active audio bandwidth before comparing — same as today.
-- **Low-buffer decision** (`bufferLevel < maxSegmentDuration`): use the
-  proportional formula `estimate × 0.7 × (bufferLevel / segDuration)`
-  (absorbed from the old InsufficientBuffer rule). When no active
-  stream yet, fall back to the steady-state formula so the very first
-  selection still works.
+- **Decision** — highest stream `≤ estimate × factor`, with asymmetric
+  upgrade (`bandwidthUpgradeTarget`) / downgrade
+  (`bandwidthDowngradeTarget`). Subtract active audio bandwidth before
+  comparing — same as today.
 - Returns `streams[0]` as a floor when no stream fits.
+
+Buffer level is not consumed — `bufferLevel` is on `DriverInput` for
+symmetry with `BolaDriver` but ignored by ThroughputDriver. The
+controller's hysteresis is the only place buffer level steers the
+throughput-driven phase.
 
 ## BOLA Driver
 
@@ -197,8 +201,9 @@ frames returns). All other fields keep their meaning.
 
 Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
 
-- `throughput_driver.test.ts` — estimator math, steady-state selection,
-  low-buffer proportional formula, audio bandwidth subtraction.
+- `throughput_driver.test.ts` — estimator math, stream selection with
+  upgrade/downgrade asymmetry, audio bandwidth subtraction, fallback to
+  lowest stream when none fit.
 - `bola_driver.test.ts` — abstention below threshold, score selection
   across buffer levels, scoring monotonicity.
 - `abr_controller.test.ts` — hysteresis transitions, driver selection
@@ -221,11 +226,13 @@ collapse into driver tests.
 
 ## Risks
 
-- **Behavior drift on low-buffer recovery.** Old code ran all rules and
-  took min, so InsufficientBuffer could pull below Throughput's pick.
-  New code uses one driver. Mitigation: low-buffer mode inside
-  ThroughputDriver applies the same proportional formula, producing the
-  same result in that regime.
+- **Sudden network drop with stale slow-EWMA.** Old code's
+  InsufficientBuffer rule pulled below Throughput's pick when buffer
+  was thin. New code relies on the fast EWMA (3s half-life) to react
+  before buffer drains. Mitigation: if real-world traces show
+  rebuffering on sudden drops, reintroduce a buffer-safety cap in the
+  controller — additive ~15 LOC change, doesn't disturb driver
+  internals.
 - **BOLA never selected if buffer can't reach `highMark`.** With
   `frontBufferLength = 30` and `highMark = 20`, normal VOD playback
   reaches BOLA quickly. Configurations with tight `frontBufferLength`
