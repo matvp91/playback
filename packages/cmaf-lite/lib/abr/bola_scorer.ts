@@ -1,4 +1,8 @@
-import type { BufferAppendedEvent, BufferFlushedEvent } from "../events";
+import type {
+  BufferAppendedEvent,
+  BufferFlushedEvent,
+  MediaAttachedEvent,
+} from "../events";
 import { Events } from "../events";
 import type { Player } from "../player";
 import type { VideoStream } from "../types/media";
@@ -7,24 +11,38 @@ import { MediaType } from "../types/media";
 export const MINIMUM_BUFFER_S = 10;
 
 export class BolaScorer {
+  private media_: HTMLMediaElement | null = null;
   private player_: Player;
-  private media_: HTMLMediaElement;
   private isSteady_ = false;
 
-  constructor(player: Player, media: HTMLMediaElement) {
+  constructor(player: Player) {
     this.player_ = player;
-    this.media_ = media;
     this.player_.on(Events.BUFFER_APPENDED, this.onBufferAppended_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
-    this.media_.addEventListener("seeking", this.onSeeking_);
+    this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
+    this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
   }
 
-  /**
-   * Returns the BOLA-recommended video stream, or `null` while
-   * either gate is closed.
-   */
+  destroy(): void {
+    this.player_.off(Events.BUFFER_APPENDED, this.onBufferAppended_);
+    this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
+    this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
+    this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
+  }
+  private onMediaAttached_ = (event: MediaAttachedEvent) => {
+    this.media_ = event.media;
+    this.media_.addEventListener("seeking", this.onSeeking_);
+  };
+
+  private onMediaDetaching_ = () => {
+    if (this.media_) {
+      this.media_.removeEventListener("seeking", this.onSeeking_);
+      this.media_ = null;
+    }
+  };
+
   getRecommendedStream(): VideoStream | null {
-    if (!this.isSteady_) {
+    if (!this.media_ || !this.isSteady_) {
       return null;
     }
     const streams = this.player_.getStreams(MediaType.VIDEO);
@@ -67,24 +85,16 @@ export class BolaScorer {
     return streams[bestIndex] ?? null;
   }
 
-  destroy(): void {
-    this.player_.off(Events.BUFFER_APPENDED, this.onBufferAppended_);
-    this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
-    this.media_.removeEventListener("seeking", this.onSeeking_);
-  }
-
   private onBufferAppended_ = (event: BufferAppendedEvent) => {
-    if (event.type !== MediaType.VIDEO) {
-      return;
+    if (event.type === MediaType.VIDEO) {
+      this.isSteady_ = true;
     }
-    this.isSteady_ = true;
   };
 
   private onBufferFlushed_ = (event: BufferFlushedEvent) => {
-    if (event.type !== MediaType.VIDEO) {
-      return;
+    if (event.type === MediaType.VIDEO) {
+      this.isSteady_ = false;
     }
-    this.isSteady_ = false;
   };
 
   private onSeeking_ = () => {

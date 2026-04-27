@@ -1,4 +1,4 @@
-import type { MediaAttachedEvent, NetworkResponseEvent } from "../events";
+import type { NetworkResponseEvent } from "../events";
 import { Events } from "../events";
 import type { Player } from "../player";
 import type { VideoStream } from "../types/media";
@@ -15,7 +15,7 @@ export class AbrController {
   private player_: Player;
   private timer_: Timer;
   private throughput_: ThroughputEstimator;
-  private bola_: BolaScorer | null = null;
+  private bola_: BolaScorer;
   private bolaActive_ = false;
 
   constructor(player: Player) {
@@ -23,12 +23,11 @@ export class AbrController {
 
     const { abr } = player.getConfig();
     this.throughput_ = new ThroughputEstimator(abr);
+    this.bola_ = new BolaScorer(player);
 
     this.timer_ = new Timer(() => this.evaluate_());
 
     this.player_.on(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
-    this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
-    this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
 
     this.timer_.tickEvery(abr.evaluationInterval);
   }
@@ -40,15 +39,8 @@ export class AbrController {
 
   destroy() {
     this.timer_.stop();
-
+    this.bola_.destroy();
     this.player_.off(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
-    this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
-    this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-
-    if (this.bola_) {
-      this.bola_.destroy();
-      this.bola_ = null;
-    }
   }
 
   private onNetworkResponse_ = (event: NetworkResponseEvent) => {
@@ -58,17 +50,6 @@ export class AbrController {
         response.durationSec,
         response.arrayBuffer.byteLength,
       );
-    }
-  };
-
-  private onMediaAttached_ = (event: MediaAttachedEvent) => {
-    this.bola_ = new BolaScorer(this.player_, event.media);
-  };
-
-  private onMediaDetaching_ = () => {
-    if (this.bola_) {
-      this.bola_.destroy();
-      this.bola_ = null;
     }
   };
 
