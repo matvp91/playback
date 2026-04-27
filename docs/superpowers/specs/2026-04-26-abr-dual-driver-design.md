@@ -38,13 +38,17 @@ This spec applies the same lessons at cmaf-lite scale.
 - One active driver per evaluation, selected by buffer level.
 - Dual EWMA throughput estimation isolated in `ThroughputEstimator`.
 - BOLA math unchanged in formula, isolated in `BolaScorer`.
-- `AbrController` is not exported from `index.ts` and has no external
-  consumers besides `Player.destroy()`. The class's surface is
-  **internal** — methods exist for `Player` lifecycle and for
-  `BolaScorer` to read state. Drop `getThroughputEstimate()` (no
-  callers); rename `getBufferLevel()` → `getFrontBuffer()`; add
-  narrow accessors for `BolaScorer` (`getStreams`, `getActiveStream`,
-  `getFrontBuffer`, `getFrontBufferLength`).
+- `AbrController` is not exported from `index.ts`; its public surface
+  consists of `destroy()` and `getThroughputEstimate(): number`.
+  `getThroughputEstimate` returns a non-nullable number (default
+  applied internally). `BolaScorer` reads its inputs from `Player`
+  directly, not via the controller.
+- `Player` gains two new public methods exposing ABR observability
+  to library consumers: `getBufferFullness(): number` (0..1, clamped
+  ratio of front buffer over `frontBufferLength`) and
+  `getThroughputEstimate(): number` (delegates to the controller).
+  `getBufferLevel` on `AbrController` is removed; the buffer
+  computation lives in `Player`.
 - Per-file module size stays small; flat layout.
 
 ## Non-goals
@@ -65,15 +69,14 @@ This spec applies the same lessons at cmaf-lite scale.
 ## Architecture
 
 ```
-AbrController (Player + all event hooks + hysteresis + picking)
- ├── ThroughputEstimator — class. Bandwidth-only. No Player.
- │                         Fed via sample() from controller's
- │                         NETWORK_RESPONSE handler.
- └── BolaScorer          — class. BOLA math + startup/steady state.
-                           Takes AbrController for state lookup
-                           callbacks. Controller calls onSeeking() on
-                           media seek; controller calls
-                           getRecommendedStream() per tick.
+Player (gains getBufferFullness + getThroughputEstimate)
+ └── AbrController (NETWORK_RESPONSE hook, hysteresis, picking,
+                    BolaScorer lifecycle)
+      ├── ThroughputEstimator — class. Bandwidth-only.
+      └── BolaScorer          — class. Created on MEDIA_ATTACHED,
+                                destroyed on MEDIA_ATTACHING.
+                                Takes (Player, HTMLMediaElement).
+                                Binds `seeking` on media directly.
 ```
 
 The split:
@@ -81,18 +84,23 @@ The split:
 - **`ThroughputEstimator`** — narrowest possible: a dual-EWMA over
   `(durationSec, bytes)` samples. Owns sampling state.
 - **`BolaScorer`** — BOLA math + an explicit trust state machine.
-  Standalone (no Player binding). Receives the `AbrController` at
-  construction so it can pull streams / active stream / front buffer /
-  config when computing a recommendation. Exposes `onSeeking()` for
-  the controller to drive the state reset.
-- **`AbrController`** — single owner of all event wiring. Hooks
-  `NETWORK_RESPONSE` (→ `throughput.sample`), `MEDIA_ATTACHED` /
-  `MEDIA_ATTACHING` (→ bind/unbind `seeking` on media), media
-  `seeking` (→ `bola.onSeeking()`). Owns the timer, hysteresis, the
-  throughput-pick algorithm, and BOLA dispatch. Exposes narrow
-  accessors (`getStreams`, `getActiveStream`, `getFrontBuffer`,
-  `getFrontBufferLength`) for `BolaScorer`. The class is not
-  exported from `index.ts`.
+  Created when media attaches; takes the media element and the
+  `Player` in its constructor. Binds `seeking` on the media element
+  directly. Reads streams / active stream / front buffer / config via
+  `Player` methods. Destroyed (and seeking listener unbound) when
+  media detaches.
+- **`AbrController`** — owns event wiring at the player-bus level
+  (`NETWORK_RESPONSE` → `throughput.sample`; `MEDIA_ATTACHED` /
+  `MEDIA_ATTACHING` → `BolaScorer` lifecycle). Owns the timer,
+  hysteresis, the throughput-pick algorithm, and BOLA dispatch.
+  Public surface: `destroy()` and `getThroughputEstimate(): number`.
+  Not exported from `index.ts`.
+- **`Player`** — gains `getBufferFullness()` (0..1, clamped: front
+  buffer in seconds divided by `frontBufferLength`) and
+  `getThroughputEstimate()` (delegates to `AbrController`). Both
+  are public observability hooks for library consumers. Internally,
+  ABR converts fullness back to seconds (multiplied by
+  `frontBufferLength`) where the algorithm needs absolute time.
 
 **Two-layer "is BOLA representable" gate** (matches dash.js):
 
@@ -121,25 +129,29 @@ controller does all event wiring.
 
 Per evaluation tick, the controller:
 
-1. Reads `streams`, `activeStream`, front buffer (via
-   `getFrontBuffer()`).
+1. Reads `streams`, `activeStream`, buffer fullness (via
+   `player.getBufferFullness()`), `frontBufferLength`.
 2. Updates the active driver via hysteresis (see Driver Selection).
-3. If active driver is BOLA: `pick = bola.getRecommendedStream()`.
-   `BolaScorer` pulls all the state it needs from the controller.
-4. If `pick` is `null` (BOLA abstained or active driver is Throughput):
-   run the controller's `pickFromThroughput_(...)` —
+3. If active driver is BOLA and `bola_` exists (media attached):
+   `pick = bola_.getRecommendedStream()`. `BolaScorer` pulls state it
+   needs (streams, active stream, front buffer, frontBufferLength)
+   from `Player` directly.
+4. If `pick` is `null` (BOLA abstained, no media, or active driver is
+   Throughput): run `pickFromThroughput_(...)` —
    `bw = throughput.getEstimate() ?? abr.defaultBandwidthEstimate`,
    walk video streams, return highest fitting `bw × factor`, fall back
    to `streams[0]`.
 5. Emits `ADAPTATION` if `pick` differs from `activeStream`.
 
-The controller subscribes to `NETWORK_RESPONSE` (forwards segment
-responses to `throughput.sample(...)`), `MEDIA_ATTACHED` /
-`MEDIA_ATTACHING` (binds/unbinds the media element's `seeking`
-listener), and the media element's `seeking` event (forwards to
-`bola.onSeeking()`). The evaluation timer starts in the constructor;
-`evaluate_` no-ops when `getStreams()` returns an empty list (manifest
-not yet loaded).
+The controller subscribes to:
+- `NETWORK_RESPONSE` → forwards segment responses to
+  `throughput.sample(...)`.
+- `MEDIA_ATTACHED` → constructs `BolaScorer(player, media)`.
+- `MEDIA_ATTACHING` → destroys current `BolaScorer` (which unbinds its
+  own `seeking` listener), then nulls the field.
+
+The evaluation timer starts in the constructor; `evaluate_` no-ops
+when `player.getStreams(MediaType.VIDEO)` returns an empty list.
 
 ## File Layout
 
@@ -165,32 +177,35 @@ export class ThroughputEstimator {
 
 // bola_scorer.ts (public surface)
 export class BolaScorer {
-  constructor(controller: AbrController);  // pulls state via controller
+  constructor(player: Player, media: HTMLMediaElement);
   // null = startup abstain (controller falls back to throughput).
   getRecommendedStream(): VideoStream | null;
-  // Called by AbrController when the media element fires `seeking`.
-  onSeeking(): void;
+  destroy(): void;                         // unbinds `seeking`
 }
 ```
 
-Neither binds to `Player`. `ThroughputEstimator` is fed via `sample()`
-from the controller's `NETWORK_RESPONSE` handler. `BolaScorer` reads
-its inputs by calling back into the controller's accessors.
-
-`BolaScorer` has no `destroy()` — it owns no listeners. The
-controller binds and unbinds everything.
+`ThroughputEstimator` is fed via `sample()` from the controller's
+`NETWORK_RESPONSE` handler. `BolaScorer` binds the media element's
+`seeking` listener in its constructor and unbinds in `destroy()`. It
+reads streams / active stream / front buffer / config via `Player`
+methods.
 
 ## Driver Selection
 
-Hysteresis around buffer level prevents flapping between drivers:
+Hysteresis around buffer fullness prevents flapping between drivers.
+Thresholds are anchored to absolute seconds (BOLA's `MINIMUM_BUFFER_S
+= 10` from the paper) and converted to fullness against the active
+`frontBufferLength`:
 
 ```
-lowMark  = MINIMUM_BUFFER_S          // 10s — BOLA's own minimum
-highMark = MINIMUM_BUFFER_S * 2      // 20s
+const fullness = player.getBufferFullness();
+const fbl      = player.getConfig().frontBufferLength;
+const lowMark  = MINIMUM_BUFFER_S       / fbl;   // 10s in fullness terms
+const highMark = (MINIMUM_BUFFER_S * 2) / fbl;   // 20s in fullness terms
 
-frontBuffer < lowMark   → Throughput
-frontBuffer > highMark  → BOLA
-otherwise               → keep current driver
+fullness < lowMark   → Throughput
+fullness > highMark  → BOLA
+otherwise            → keep current driver
 ```
 
 Initial driver is `Throughput` (buffer is 0 at startup). The controller
@@ -235,17 +250,19 @@ effect. EWMA half-lives changing mid-session is not supported.
 
 ## BOLA Scorer
 
-Class with explicit trust state. Standalone — no Player binding, no
-event subscriptions of its own. Constructor takes the `AbrController`
-so it can pull streams / active stream / front buffer / config when
-asked.
+Class with explicit trust state. Constructor takes the `Player` and
+the attached `HTMLMediaElement` (so the seeking listener binds
+immediately). Lifetime is tied to the media attachment: the
+controller creates a `BolaScorer` on `MEDIA_ATTACHED` and destroys it
+on `MEDIA_ATTACHING`.
 
 File: `bola_scorer.ts` contains:
 - `MINIMUM_BUFFER_S = 10` — file-private constant.
 - `class BolaScorer` — exported.
 
 ### State
-- `private controller_: AbrController` — for state lookups.
+- `private player_: Player` — for state reads.
+- `private media_: HTMLMediaElement` — for the seeking listener.
 - `private isSteady_: boolean = false` — startup state machine. False
   initially and after a seek; true once front buffer reaches one
   segment duration.
@@ -256,7 +273,7 @@ File: `bola_scorer.ts` contains:
 |---|---|---|
 | (init) | `isSteady_ = false` | constructor |
 | `false` | `true` | `getRecommendedStream()` called with `frontBuffer >= maxSegmentDuration` |
-| `true` | `false` | `onSeeking()` called by controller (media `seeking` event) |
+| `true` | `false` | media `seeking` event fires |
 
 Why this matches dash.js's three-trigger model:
 - **Initial → startup**: matches dash.js's `BOLA_STATE_STARTUP` at init.
@@ -268,11 +285,12 @@ Why this matches dash.js's three-trigger model:
 
 ```ts
 getRecommendedStream(): VideoStream | null
-  // Pull state via this.controller_.
-  // streams      = controller.getStreams()
-  // active       = controller.getActiveStream()
-  // frontBuffer  = controller.getFrontBuffer()
-  // fbl          = controller.getFrontBufferLength()
+  // Pull state via this.player_.
+  // streams      = player.getStreams(MediaType.VIDEO)
+  // active       = player.getActiveStream(MediaType.VIDEO)
+  // fullness     = player.getBufferFullness()       // 0..1
+  // fbl          = player.getConfig().frontBufferLength
+  // frontBuffer  = fullness * fbl                   // recover seconds
   // If !active or streams.length === 0, return null.
   // segDur = active.hierarchy.track.maxSegmentDuration
   //
@@ -280,21 +298,21 @@ getRecommendedStream(): VideoStream | null
   //   if (frontBuffer < segDur) return null;
   //   isSteady_ = true;
   //
-  // Compute lnS1, vM, Qmax, gp, V (BOLA math).
+  // Compute lnS1, vM, Qmax, gp, V (BOLA math, in seconds).
   // Return streams[argmax_i (V*(vm_i - 1 + gp) - frontBuffer) / streams[i].bandwidth]
   //   where vm_i = log(streams[i].bandwidth) - lnS1 + 1.
 
-onSeeking(): void
-  // isSteady_ = false
+destroy(): void
+  // media_.removeEventListener("seeking", this.onSeeking_)
 ```
 
-### Why no `destroy()`?
+### Why a `destroy()` (and a private seek handler)?
 
-`BolaScorer` owns no event listeners and no resources requiring
-cleanup. The `controller_` reference is just a pointer; when the
-controller is destroyed, the scorer becomes unreachable through it
-and is GC'd. The controller binds/unbinds the seeking listener on the
-media element and forwards calls to `onSeeking()`.
+`BolaScorer` owns one event listener (`seeking` on the media element),
+bound in the constructor. `destroy()` unbinds it. The controller calls
+`destroy()` on `MEDIA_ATTACHING` (or in its own `destroy()` if media
+was still attached). The private `onSeeking_` handler simply sets
+`isSteady_ = false`.
 
 ### Why a class with state (now), not the earlier function?
 
@@ -318,61 +336,48 @@ without touching call sites.
 
 ## AbrController
 
-Owns the `Player`, all event wiring, and all policy. The estimator
-and scorer are helpers it constructs and feeds.
+Owns the `Player`, player-bus event wiring, the eval timer, and the
+`BolaScorer` lifecycle.
 
 Responsibilities:
-- Construct `ThroughputEstimator(abrConfig)` and `BolaScorer(this)`.
-- Subscribe to `NETWORK_RESPONSE` (forwards segment responses to
-  `throughput.sample(...)`).
-- Subscribe to `MEDIA_ATTACHED` and `MEDIA_ATTACHING` to bind/unbind a
-  `seeking` listener on the video element. The media `seeking` event
-  forwards to `bola.onSeeking()`.
+- Construct `ThroughputEstimator(abrConfig)`. If media is already
+  attached at construction, also construct
+  `BolaScorer(player, media)`.
+- Subscribe to `NETWORK_RESPONSE` → `throughput.sample(...)`.
+- Subscribe to `MEDIA_ATTACHED` → construct `BolaScorer(player, media)`.
+- Subscribe to `MEDIA_ATTACHING` → call `bola_.destroy()`, null
+  `bola_`.
 - Start the evaluation timer at `evaluationInterval` immediately.
-- `evaluate_` no-ops when `getStreams()` returns empty (manifest not
-  yet loaded).
+- `evaluate_` no-ops when `player.getStreams(MediaType.VIDEO)` is
+  empty (manifest not yet loaded).
 - Track active-driver state (`"throughput" | "bola"`) and update via
-  hysteresis.
-- Per tick, dispatch to `bola.getRecommendedStream()` or
-  `pickFromThroughput_()` (with BOLA-null fallback to throughput) and
-  emit `ADAPTATION` when the pick differs from the active stream.
+  hysteresis (uses `player.getBufferFullness()`).
+- Per tick: if active is BOLA and `bola_` exists, call
+  `bola_.getRecommendedStream()`. On null or no `bola_`, fall back to
+  `pickFromThroughput_()`. Emit `ADAPTATION` when the pick differs
+  from the active stream.
 
-Surface (intra-package; not exported from `index.ts`):
+Surface:
 
 ```ts
 class AbrController {
   constructor(player: Player);
-  // For Player lifecycle:
+  getThroughputEstimate(): number;            // default applied internally
   destroy(): void;
-  // For BolaScorer state lookup:
-  getStreams(): VideoStream[];
-  getActiveStream(): VideoStream | null;
-  getFrontBuffer(): number;                  // renamed from getBufferLevel()
-  getFrontBufferLength(): number;            // PlayerConfig.frontBufferLength
 }
 ```
 
-`getFrontBuffer()` (rename of today's `getBufferLevel`): returns the
-seconds of video buffered ahead of the current playback position.
-Implementation unchanged — uses `getBufferedEnd(buffered, currentTime,
-maxBufferHole)` over `player.getBuffered(MediaType.VIDEO)`. Returns
-`0` when there's no media element or no continuous range.
-
-`getStreams()` and `getActiveStream()` — thin passthroughs to
-`player.getStreams(MediaType.VIDEO)` and
-`player.getActiveStream(MediaType.VIDEO)`. `getFrontBufferLength()` —
-returns `player.getConfig().frontBufferLength`.
+`getThroughputEstimate()` returns
+`this.throughput_.getEstimate() ?? this.player_.getConfig().abr.defaultBandwidthEstimate`.
+Always a number — consumers don't deal with null. `Player.getThroughputEstimate()`
+delegates here.
 
 `destroy()` stops the timer, unbinds `NETWORK_RESPONSE`,
-`MEDIA_ATTACHED`, `MEDIA_ATTACHING`, and the media element's
-`seeking` listener.
+`MEDIA_ATTACHED`, `MEDIA_ATTACHING`, and (if `bola_` is non-null)
+calls `bola_.destroy()`.
 
-`getThroughputEstimate()` (existed in today's controller as a
-public-API hook) is **removed** — `AbrController` is not exported, so
-nothing outside the package can reach it. The single internal caller
-(`pickFromThroughput_`) reads
-`this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate`
-inline.
+`AbrController` is not exported from `index.ts`. External consumers
+reach throughput observability via `Player.getThroughputEstimate()`.
 
 ### Throughput-pick logic
 
@@ -399,6 +404,32 @@ private pickFromThroughput_(streams, activeStream, abr) {
 
 (No audio-bandwidth subtraction — see Architecture: video-only.)
 
+## Player additions
+
+Two new public methods on `Player` exposing ABR observability to
+library consumers:
+
+```ts
+getBufferFullness(): number
+  // 0..1, clamped. front buffer in seconds / config.frontBufferLength.
+  // Implementation:
+  //   const media = this.getMedia();
+  //   if (!media) return 0;
+  //   const buffered = this.getBuffered(MediaType.VIDEO);
+  //   const { maxBufferHole, frontBufferLength } = this.getConfig();
+  //   const end = getBufferedEnd(buffered, media.currentTime, maxBufferHole);
+  //   if (!end) return 0;
+  //   return Math.min(1, (end - media.currentTime) / frontBufferLength);
+
+getThroughputEstimate(): number
+  // Delegates: this.abrController_.getThroughputEstimate().
+  // Always a number (estimator's null is collapsed via the configured
+  // default inside AbrController).
+```
+
+Both are observability-only — no setters. ABR consumers (analytics,
+debug UIs) can read them at any time.
+
 ## Config
 
 `AbrConfig` changes:
@@ -420,20 +451,23 @@ Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
   returns `null` while `totalBytes_ < config.minTotalBytes`, returns
   `min(fast, slow)` once over the threshold, invalid samples are
   ignored.
-- `bola_scorer.test.ts` — startup state returns `null` until front
-  buffer ≥ segment duration, transitions to steady on the next call,
-  `onSeeking()` resets to startup, correct argmax across buffer
-  levels, monotonic preference shift toward higher streams as buffer
-  grows. Tests use a stub `AbrController` that returns canned values
-  from `getStreams()` / `getActiveStream()` / `getFrontBuffer()` /
-  `getFrontBufferLength()`.
-- `abr_controller.test.ts` — hysteresis transitions, BOLA-null
-  fallback to throughput, throughput-pick logic (default-fallback on
-  `getEstimate() === null`, upgrade/downgrade asymmetry,
-  lowest-stream floor, no audio subtraction), `NETWORK_RESPONSE →
-  throughput.sample` forwarding, media `seeking → bola.onSeeking`
-  forwarding (rebound across `MEDIA_ATTACHING` / `MEDIA_ATTACHED`),
-  `ADAPTATION` emission, `evaluate_` no-op on empty stream list.
+- `bola_scorer.test.ts` — startup state returns `null` until
+  `fullness × frontBufferLength` ≥ segment duration, transitions to
+  steady on the next call, media `seeking` event resets to startup,
+  correct argmax across buffer levels, monotonic preference shift
+  toward higher streams as buffer grows. Tests use a stub `Player`
+  that returns canned values from `getStreams()`,
+  `getActiveStream()`, `getBufferFullness()`, `getConfig()`, plus a
+  fake `HTMLMediaElement` for the seeking dispatch.
+- `abr_controller.test.ts` — hysteresis transitions (in fullness
+  terms, anchored to `MINIMUM_BUFFER_S / fbl`), BOLA-null fallback to
+  throughput, BolaScorer lifecycle (created on `MEDIA_ATTACHED`,
+  destroyed on `MEDIA_ATTACHING`), throughput-pick logic
+  (default-fallback on `getEstimate() === null`, upgrade/downgrade
+  asymmetry, lowest-stream floor, no audio subtraction),
+  `NETWORK_RESPONSE → throughput.sample` forwarding, `ADAPTATION`
+  emission, `evaluate_` no-op on empty stream list,
+  `getThroughputEstimate()` always returns a number.
 
 Existing tests under `test/abr/` are migrated; rule-specific tests
 collapse into the new tests above.
