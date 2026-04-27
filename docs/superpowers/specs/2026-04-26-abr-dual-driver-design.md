@@ -150,7 +150,7 @@ responsibility (`?? abr.defaultBandwidthEstimate`).
 
 Class with explicit trust state. Constructor takes the `Player` and
 the attached `HTMLMediaElement`. Lifetime tied to media attachment:
-controller creates on `MEDIA_ATTACHED`, destroys on `MEDIA_ATTACHING`.
+controller creates on `MEDIA_ATTACHED`, destroys on `MEDIA_DETACHING`.
 
 **State:** `player_`, `media_`, `isSteady_: boolean = false`.
 
@@ -223,7 +223,7 @@ delegates here.
 **Event subscriptions:**
 - `NETWORK_RESPONSE` (segments) → `throughput.sample(...)`.
 - `MEDIA_ATTACHED` → `bola_ = new BolaScorer(player, media)`.
-- `MEDIA_ATTACHING` → `bola_.destroy(); bola_ = null`.
+- `MEDIA_DETACHING` → `bola_.destroy(); bola_ = null`.
 
 (BolaScorer owns its own buffer-append, buffer-flush, and seeking
 listeners — controller doesn't forward.)
@@ -297,7 +297,7 @@ Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
   and a fake `HTMLMediaElement`.
 - **`abr_controller.test.ts`** — hysteresis transitions; BOLA-null →
   throughput fallback; BolaScorer lifecycle on `MEDIA_ATTACHED` /
-  `MEDIA_ATTACHING`; throughput-pick (default fallback,
+  `MEDIA_DETACHING`; throughput-pick (default fallback,
   upgrade/downgrade asymmetry, lowest-stream floor); `NETWORK_RESPONSE
   → throughput.sample` forwarding; `ADAPTATION` emission;
   `evaluate_` no-op on empty streams; `getThroughputEstimate()`
