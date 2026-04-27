@@ -105,10 +105,11 @@ Per evaluation tick, the controller:
    `pick = bolaScore(streams, frontBuffer,
    activeStream.hierarchy.track.maxSegmentDuration, frontBufferLength)`.
 4. If `pick` is `null` (BOLA abstained or active driver is Throughput):
-   run the controller's `pickFromThroughput_(...)` — `bw =
-   throughput.getEstimate() ?? defaultBandwidthEstimate`, walk video
-   streams, return highest fitting `bw × factor`, fall back to
-   `streams[0]`.
+   run the controller's `pickFromThroughput_(...)` —
+   `bw = throughput.getTotalBytes() < MIN_TOTAL_BYTES
+        ? defaultBandwidthEstimate
+        : throughput.getEstimate()`, walk video streams, return
+   highest fitting `bw × factor`, fall back to `streams[0]`.
 5. Emits `ADAPTATION` if `pick` differs from `activeStream`.
 
 The controller subscribes only to `NETWORK_RESPONSE` (forwards
@@ -136,7 +137,8 @@ moves into `throughput_estimator.ts`).
 export class ThroughputEstimator {
   constructor(config: AbrConfig);
   sample(durationSec: number, bytes: number): void;
-  getEstimate(): number | null;            // null while undersampled
+  getEstimate(): number;                   // raw min(fast, slow); may be NaN at 0 samples
+  getTotalBytes(): number;                 // running sum of valid sample bytes
 }
 
 // bola_scorer.ts (public surface)
@@ -172,12 +174,10 @@ stores the current driver as a private field.
 ## Throughput Estimator
 
 Pure dual-EWMA estimator. No streams, no Player, no events. Sampled
-from outside via `sample()`.
+from outside via `sample()`. Knows nothing about reliability
+thresholds — that's the controller's concern.
 
 File: `throughput_estimator.ts` contains:
-- `MIN_TOTAL_BYTES = 128_000` — file-private constant. Below this,
-  `getEstimate()` returns `null`. Was `AbrConfig.minTotalBytes`
-  (removed); now hardcoded.
 - `class Ewma` — file-private primitive. Weighted EWMA with bias
   correction. Math unchanged from today's `lib/abr/ewma.ts`.
 - `class ThroughputEstimator` — exported.
@@ -196,10 +196,19 @@ sample(durationSec: number, bytes: number): void
   // fast_.sample(durationSec, bps); slow_.sample(durationSec, bps)
   // totalBytes_ += bytes
 
-getEstimate(): number | null
-  // null when totalBytes_ < MIN_TOTAL_BYTES.
-  // Otherwise: Math.min(fast_.getEstimate(), slow_.getEstimate()).
+getEstimate(): number
+  // Math.min(fast_.getEstimate(), slow_.getEstimate()).
+  // May return NaN at zero samples; callers must gate on getTotalBytes()
+  // first (the controller does this).
+
+getTotalBytes(): number
+  // Returns totalBytes_. Used by AbrController to decide when the
+  // estimate is trustworthy enough to use vs. falling back to the
+  // configured default.
 ```
+
+The reliability threshold (`MIN_TOTAL_BYTES`) lives in `AbrController`,
+not here — see that section.
 
 Config staleness: `fastHalfLife` and `slowHalfLife` are captured at
 construction. EWMA half-lives changing mid-session is not supported.
@@ -287,8 +296,10 @@ class AbrController {
 }
 ```
 
-`getThroughputEstimate()` delegates: `throughput.getEstimate() ??
-config.abr.defaultBandwidthEstimate`.
+`getThroughputEstimate()` returns
+`throughput.getTotalBytes() < MIN_TOTAL_BYTES
+  ? config.abr.defaultBandwidthEstimate
+  : throughput.getEstimate()`.
 
 `getFrontBuffer()` (rename of today's `getBufferLevel`): returns the
 seconds of video buffered ahead of the current playback position.
@@ -299,11 +310,24 @@ maxBufferHole)` over `player.getBuffered(MediaType.VIDEO)`. Returns
 `destroy()` stops the timer and unbinds the `NETWORK_RESPONSE`
 listener.
 
-Throughput-pick logic lives in a private controller method:
+### Reliability threshold
+
+`MIN_TOTAL_BYTES = 128_000` — file-private constant in
+`abr_controller.ts`. Below this, the throughput estimate is considered
+unreliable (too few samples for the EWMA to settle); the controller
+substitutes `abr.defaultBandwidthEstimate`. Was `AbrConfig.minTotalBytes`
+(removed); the threshold is now policy that lives in the controller,
+not the estimator.
+
+### Throughput-pick logic
+
+Lives in a private controller method:
 
 ```ts
 private pickFromThroughput_(streams, activeStream, abr) {
-  const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
+  const bw = this.throughput_.getTotalBytes() < MIN_TOTAL_BYTES
+    ? abr.defaultBandwidthEstimate
+    : this.throughput_.getEstimate();
 
   let best: VideoStream | null = null;
   for (const s of streams) {
@@ -325,16 +349,16 @@ private pickFromThroughput_(streams, activeStream, abr) {
 ## Config
 
 `AbrConfig` changes:
-- **Removed:** `minTotalBytes` — moved into `throughput_estimator.ts`
-  as a hardcoded `MIN_TOTAL_BYTES = 128_000`. Same gating behavior as
-  today; just no longer user-configurable. `getEstimate()` returns
-  `null` while undersampled.
+- **Removed:** `minTotalBytes` — moved into `abr_controller.ts` as a
+  hardcoded `MIN_TOTAL_BYTES = 128_000` policy threshold. Same gating
+  behavior as today; just no longer user-configurable.
 - **Retained but unused in this refactor:** `droppedFramesThreshold` —
   restored when dropped-frames handling returns in a follow-up.
 
 Other fields keep their meaning. `defaultBandwidthEstimate` is applied
-in `AbrController` (`throughput.getEstimate() ?? default`) rather than
-passed into the estimator.
+in `AbrController`'s `pickFromThroughput_` (gated on
+`getTotalBytes() < MIN_TOTAL_BYTES`) rather than passed into the
+estimator.
 
 Update sites: `lib/config.ts` (interface + `DEFAULT_CONFIG`),
 `docs/abr.md`, any reference docs that mention `minTotalBytes`.
@@ -344,13 +368,14 @@ Update sites: `lib/config.ts` (interface + `DEFAULT_CONFIG`),
 Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
 
 - `throughput_estimator.test.ts` — dual-EWMA math, `getEstimate()`
-  returns `null` while `totalBytes_ < MIN_TOTAL_BYTES`, `min(fast,
-  slow)` once over the threshold, invalid samples are ignored.
+  returns `min(fast, slow)`, `getTotalBytes()` accumulates across
+  valid samples, invalid samples are ignored.
 - `bola_scorer.test.ts` — abstention below segment-duration buffer
   (returns `null`), correct argmax across buffer levels, monotonic
   preference shift toward higher streams as buffer grows.
 - `abr_controller.test.ts` — hysteresis transitions, BOLA-null
-  fallback to throughput, throughput-pick logic (upgrade/downgrade
+  fallback to throughput, throughput-pick logic (default-fallback
+  when `getTotalBytes() < MIN_TOTAL_BYTES`, upgrade/downgrade
   asymmetry, lowest-stream floor, no audio subtraction),
   `NETWORK_RESPONSE → throughput.sample` forwarding, `ADAPTATION`
   emission.
