@@ -36,10 +36,10 @@ This spec applies the same lessons at cmaf-lite scale.
 ## Goals
 
 - One active driver per evaluation, selected by buffer level.
-- Dual EWMA throughput estimation lives inside the throughput driver.
-- BOLA implementation unchanged in formula, repackaged behind a driver
-  interface.
-- Public `AbrController` API and `AbrConfig` shape unchanged.
+- Dual EWMA throughput estimation isolated in `ThroughputEstimator`.
+- BOLA math unchanged in formula, isolated in `bolaScore()`.
+- Public `AbrController` API roughly unchanged (one rename:
+  `getBufferLevel()` → `getFrontBuffer()`).
 - Per-file module size stays small; flat layout.
 
 ## Non-goals
@@ -63,42 +63,46 @@ This spec applies the same lessons at cmaf-lite scale.
 AbrController (Player access, streams, buffer, hysteresis, picking)
  ├── ThroughputEstimator — class. Only computes bandwidth from
  │                         samples. No streams, no Player.
- └── BolaScorer          — class. Stateless math. Takes inputs by
-                           argument, returns a recommended stream.
-                           No Player.
+ └── bolaScore()         — exported function. Pure BOLA math. No
+                           state, no Player.
 ```
 
 The split:
 
 - **`ThroughputEstimator`** — narrowest possible: a dual-EWMA over
-  `(durationSec, bytes)` samples. Owns sampling state. Nothing else.
-- **`BolaScorer`** — pure BOLA math packaged as a class. Recomputes
-  derived params each call. The class shape is forward-compatible:
-  if we later add placeholder buffer / BOLA-O, state lives here.
-- **`AbrController`** — owns the `Player`, streams access, buffer
-  level computation, the hysteresis switch, the throughput-pick
+  `(durationSec, bytes)` samples. Owns sampling state. Class because
+  it has cross-call state worth encapsulating.
+- **`bolaScore()`** — pure BOLA math as an exported function (~30
+  LOC). Stateless. If we later restore placeholder buffer or BOLA-O,
+  this gets promoted to a class with state at that point.
+- **`AbrController`** — owns the `Player`, streams access, front
+  buffer computation, the hysteresis switch, the throughput-pick
   algorithm (audio-free; just bandwidth + factors), and the BOLA
-  dispatch. It feeds samples to the estimator and inputs to the
-  scorer.
+  dispatch. It feeds samples to the estimator and arguments to
+  `bolaScore`.
 
 The "is BOLA representable" gate (dash.js's `BOLA_STATE_STARTUP`) is
-**lifted out of BOLA into the controller's buffer hysteresis** — same
-logic, expressed at a different layer.
+**handled by the controller's buffer hysteresis** — `frontBuffer <
+lowMark → throughput`. On seek, real buffer drains, hysteresis routes
+to throughput automatically. Same logic as dash.js's startup mode,
+expressed at the controller layer.
 
 **Scope: video-only.** `AbrController` consumes
 `player.getStreams(MediaType.VIDEO)` only. Audio is not consulted —
 not subtracted from the throughput budget, not switched. Multi-bitrate
 audio ABR would be a separate per-type controller; out of scope here.
 
-Drivers are **pure logic objects** — testable in isolation, no event
-bus, no Player coupling. The controller does all wiring and all policy.
+Both `ThroughputEstimator` and `bolaScore()` are **pure logic** —
+testable in isolation, no event bus, no Player coupling. The
+controller does all wiring and all policy.
 
 Per evaluation tick, the controller:
 
-1. Reads `streams`, `activeStream`, `bufferLevel`, config.
+1. Reads `streams`, `activeStream`, front buffer (via
+   `getFrontBuffer()`), config.
 2. Updates the active driver via hysteresis (see Driver Selection).
 3. If active driver is BOLA and `activeStream` exists:
-   `pick = bola.getRecommendedStream(streams, bufferLevel,
+   `pick = bolaScore(streams, frontBuffer,
    activeStream.hierarchy.track.maxSegmentDuration, frontBufferLength)`.
 4. If `pick` is `null` (BOLA abstained or active driver is Throughput):
    run the controller's `pickFromThroughput_(...)` — `bw =
@@ -107,9 +111,11 @@ Per evaluation tick, the controller:
    `streams[0]`.
 5. Emits `ADAPTATION` if `pick` differs from `activeStream`.
 
-The controller subscribes to `STREAMS_CREATED` (kicks off the eval
-timer) and `NETWORK_RESPONSE` (forwards segment responses to
-`throughput.sample(...)`).
+The controller subscribes only to `NETWORK_RESPONSE` (forwards
+segment responses to `throughput.sample(...)`). The evaluation timer
+starts in the constructor; `evaluate_` no-ops when
+`player.getStreams(MediaType.VIDEO)` returns an empty list (i.e.
+manifest not yet loaded).
 
 ## File Layout
 
@@ -117,7 +123,7 @@ timer) and `NETWORK_RESPONSE` (forwards segment responses to
 lib/abr/
   abr_controller.ts        — controller: events, hysteresis, picking
   throughput_estimator.ts  — Ewma (file-private) + ThroughputEstimator
-  bola_scorer.ts           — BolaScorer
+  bola_scorer.ts           — bolaScore() function
 ```
 
 Files removed: `ewma.ts`, `ewma_bandwidth_estimator.ts` (their code
@@ -134,22 +140,18 @@ export class ThroughputEstimator {
 }
 
 // bola_scorer.ts (public surface)
-export class BolaScorer {
-  // Stateless today. Class shape reserved for placeholder buffer /
-  // BOLA-O state if we restore those later.
-  getRecommendedStream(
-    streams: VideoStream[],
-    bufferLevel: number,
-    maxSegmentDuration: number,
-    frontBufferLength: number,
-  ): VideoStream | null;                   // null = abstain (startup)
-}
+export function bolaScore(
+  streams: VideoStream[],
+  frontBuffer: number,
+  maxSegmentDuration: number,
+  frontBufferLength: number,
+): VideoStream | null;                     // null = abstain (startup)
 ```
 
 Neither takes the `Player`. `ThroughputEstimator` is fed via `sample()`
-from the controller's `NETWORK_RESPONSE` handler. `BolaScorer`
-receives all inputs by argument — the controller pulls them from the
-player and passes them through.
+from the controller's `NETWORK_RESPONSE` handler. `bolaScore` receives
+all inputs by argument — the controller pulls them from the player
+and passes them through.
 
 ## Driver Selection
 
@@ -159,8 +161,8 @@ Hysteresis around buffer level prevents flapping between drivers:
 lowMark  = MINIMUM_BUFFER_S          // 10s — BOLA's own minimum
 highMark = MINIMUM_BUFFER_S * 2      // 20s
 
-bufferLevel < lowMark   → Throughput
-bufferLevel > highMark  → BOLA
+frontBuffer < lowMark   → Throughput
+frontBuffer > highMark  → BOLA
 otherwise               → keep current driver
 ```
 
@@ -204,44 +206,41 @@ construction. EWMA half-lives changing mid-session is not supported.
 
 ## BOLA Scorer
 
-Pure BOLA math packaged as a class. No Player, no events, no listeners.
-Stateless today — derived params recomputed each call (cheap; ABR ticks
-at multi-second cadence).
+Pure BOLA math as an exported function. No Player, no events, no
+listeners, no state. Derived params recomputed each call (cheap; ABR
+ticks at multi-second cadence).
 
 File: `bola_scorer.ts` contains:
 - `MINIMUM_BUFFER_S = 10` — file-private constant.
-- `class BolaScorer` — exported.
+- `bolaScore(...)` — exported function.
 
-### State
-None today. Class shape reserved for placeholder buffer / BOLA-O
-state if we restore those later.
-
-### API
+### Algorithm
 
 ```ts
-getRecommendedStream(
+export function bolaScore(
   streams: VideoStream[],
-  bufferLevel: number,
+  frontBuffer: number,
   maxSegmentDuration: number,
   frontBufferLength: number,
 ): VideoStream | null
-  // If bufferLevel < maxSegmentDuration → null (startup abstain).
+  // If frontBuffer < maxSegmentDuration → null (startup abstain).
   // Compute: lnS1 = log(streams[0].bandwidth)
   //          vM   = log(streams[last].bandwidth) - lnS1 + 1
   //          Qmax = max(frontBufferLength, MINIMUM_BUFFER_S + 2*streams.length)
   //          gp   = (vM - 1) / (Qmax / MINIMUM_BUFFER_S - 1)
   //          V    = MINIMUM_BUFFER_S / gp
-  // Return streams[argmax_i (V*(vm_i - 1 + gp) - bufferLevel) / streams[i].bandwidth]
+  // Return streams[argmax_i (V*(vm_i - 1 + gp) - frontBuffer) / streams[i].bandwidth]
   //   where vm_i = log(streams[i].bandwidth) - lnS1 + 1.
 ```
 
-### Why a class with no state?
+### Why a function (not a class)?
 
-dash.js's `bolaState` exists for four concerns; analyzing each:
+In our simplified impl, BOLA is genuinely stateless. dash.js's
+`bolaState` exists for four concerns; we don't keep any of them:
 
 1. **Representability gate** (`STARTUP`/`STEADY` enum). dash.js bypasses
    BOLA's math when buffer is too low. **We externalize this** via the
-   controller's buffer hysteresis: `bufferLevel < lowMark → throughput`.
+   controller's buffer hysteresis: `frontBuffer < lowMark → throughput`.
    On seek, real buffer drains, hysteresis routes to throughput
    automatically. No internal state needed.
 
@@ -254,10 +253,9 @@ dash.js's `bolaState` exists for four concerns; analyzing each:
 4. **Multi-period plumbing** (`bolaStateDict[streamId][mediaType]`).
    Out of scope; we're single-period, video-only.
 
-So today the class holds no state. Class shape chosen for
-**forward-compatibility**: if we later restore placeholder buffer or
-BOLA-O, state lives inside `BolaScorer` without changing how the
-controller calls it.
+If we later restore (1)–(3), `bolaScore` gets promoted to a class with
+state at that point. YAGNI now — a function is the honest shape for
+stateless math.
 
 ## AbrController
 
@@ -265,32 +263,34 @@ Owns the `Player`, all event wiring, and all policy. The estimator
 and scorer are pure helpers it constructs and feeds.
 
 Responsibilities:
-- Construct `ThroughputEstimator(abrConfig)` and `BolaScorer()`.
-- Subscribe to `STREAMS_CREATED` (kicks off eval timer) and
-  `NETWORK_RESPONSE` (forwards segment responses to
+- Construct `ThroughputEstimator(abrConfig)`.
+- Subscribe to `NETWORK_RESPONSE` (forwards segment responses to
   `throughput.sample(...)`).
-- Run the evaluation timer at `evaluationInterval`.
-- Compute `bufferLevel`.
+- Start the evaluation timer at `evaluationInterval` immediately.
+- `evaluate_` no-ops when `player.getStreams(MediaType.VIDEO)` is
+  empty (manifest not yet loaded).
+- Compute front buffer (`getFrontBuffer()`).
 - Track active-driver state (`"throughput" | "bola"`) and update via
   hysteresis.
-- Per tick, dispatch to BOLA or throughput pick (with BOLA-null
-  fallback to throughput) and emit `ADAPTATION` when the pick differs
-  from the active stream.
+- Per tick, dispatch to `bolaScore(...)` or the throughput pick (with
+  BOLA-null fallback to throughput) and emit `ADAPTATION` when the
+  pick differs from the active stream.
 
-Public surface (unchanged for consumers):
+Public surface (unchanged in shape; `getBufferLevel` renamed):
 
 ```ts
 class AbrController {
   constructor(player: Player);
   getThroughputEstimate(): number;
-  getBufferLevel(): number;
+  getFrontBuffer(): number;             // renamed from getBufferLevel()
   destroy(): void;
 }
 ```
 
 `getThroughputEstimate()` delegates: `throughput.getEstimate() ??
-config.abr.defaultBandwidthEstimate`. `destroy()` stops the timer and
-unbinds listeners.
+config.abr.defaultBandwidthEstimate`. `getFrontBuffer()` returns the
+seconds of video buffered ahead of the playback position (was
+`getBufferLevel`). `destroy()` stops the timer and unbinds listeners.
 
 Throughput-pick logic lives in a private controller method:
 
