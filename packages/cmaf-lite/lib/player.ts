@@ -14,6 +14,7 @@ import { TimelineController } from "./timeline/timeline_controller";
 import type { DeepPartial } from "./types/helpers";
 import type { Stream } from "./types/media";
 import { MediaType } from "./types/media";
+import { getBufferedEnd } from "./utils/buffer_utils";
 import * as ObjectUtils from "./utils/object_utils";
 
 /**
@@ -105,6 +106,27 @@ export class Player extends EventEmitter<EventMap> {
    */
   getTimeline() {
     return this.timelineController_.getTimeline();
+  }
+
+  /**
+   * Returns the front-buffer fullness for video, clamped to [0, 1].
+   * `0` when no media is attached or no buffered range covers the
+   * playhead. Otherwise: `ahead / frontBufferLength` where `ahead`
+   * is seconds buffered ahead of `currentTime`, clamped at 1.
+   */
+  getBufferFullness(): number {
+    const media = this.media_;
+    if (!media) {
+      return 0;
+    }
+    const buffered = this.getBuffered(MediaType.VIDEO);
+    const { maxBufferHole, frontBufferLength } = this.config_;
+    const end = getBufferedEnd(buffered, media.currentTime, maxBufferHole);
+    if (end === null) {
+      return 0;
+    }
+    const ahead = end - media.currentTime;
+    return Math.min(1, ahead / frontBufferLength);
   }
 
   /**
