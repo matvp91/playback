@@ -271,7 +271,7 @@ File: `bola_scorer.ts` contains:
 
 | Source | Event | Effect |
 |---|---|---|
-| `player` (event bus) | `BUFFER_APPENDED` | if `e.type === SourceBufferMediaType.VIDEO` AND `e.segment` is a media segment (not init): `isSteady_ = true` |
+| `player` (event bus) | `BUFFER_APPENDED` | if `e.type === SourceBufferMediaType.VIDEO`: `isSteady_ = true` |
 | `player` (event bus) | `BUFFER_FLUSHED` | if `e.type === SourceBufferMediaType.VIDEO`: `isSteady_ = false` |
 | `media` (HTMLMediaElement) | `seeking` | `isSteady_ = false` |
 
@@ -279,15 +279,16 @@ File: `bola_scorer.ts` contains:
 
 `getRecommendedStream()` runs BOLA only when **both** gates pass:
 
-1. **Event gate** (`isSteady_` boolean) — "at least one media segment
-   appended since the last reset." Set by `BUFFER_APPENDED`; cleared
-   by `BUFFER_FLUSHED` and `seeking`. Catches the seek-into-buffered
+1. **Event gate** (`isSteady_` boolean) — "at least one video append
+   since the last reset." Set by `BUFFER_APPENDED`; cleared by
+   `BUFFER_FLUSHED` and `seeking`. Catches the seek-into-buffered
    case where buffer is high but no fresh data has arrived.
 2. **Threshold gate** (`frontBuffer >= streams[0].hierarchy.track.maxSegmentDuration`)
    — "enough buffered media to safely run BOLA." Checked per call.
    Catches small/short final segments (e.g., 2s tail of a VOD when
-   `maxSegmentDuration` is 6s) where the event fires but content is
-   insufficient.
+   `maxSegmentDuration` is 6s) and init-segment appends (codec
+   metadata adds no buffered time, so threshold stays unsatisfied
+   until a real media segment lands).
 
 When either gate fails, `getRecommendedStream()` returns `null` and
 the controller falls back to throughput.
@@ -297,10 +298,10 @@ Uniform across video streams in practice (shared period/track
 structure). Avoids re-introducing a `getActiveStream()` read on
 `Player`.
 
-**Init segments are skipped in the `BUFFER_APPENDED` handler** —
-init data doesn't contribute to buffered media time. Without this
-filter, the event gate would flip prematurely on the codec-init
-append.
+The `BUFFER_APPENDED` handler does **not** filter init vs. media
+segments — the threshold gate handles that case automatically (init
+adds zero buffered time, so `frontBuffer < maxSegmentDuration`
+remains true until a media segment lands). Simpler handler.
 
 **Why `BUFFER_APPENDED`, not `NETWORK_RESPONSE`?** `NETWORK_RESPONSE`
 fires on download completion, before the bytes hit the SourceBuffer.
@@ -500,14 +501,14 @@ Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
   `min(fast, slow)` once over the threshold, invalid samples are
   ignored.
 - `bola_scorer.test.ts` —
-  - Event gate: `null` before any video `BUFFER_APPENDED` (media
-    segment); after one video media-segment `BUFFER_APPENDED`, gate
-    opens. Audio `BUFFER_APPENDED` ignored. Init-segment
-    `BUFFER_APPENDED` ignored (gate stays closed). Media `seeking`
-    re-arms. Video `BUFFER_FLUSHED` re-arms. Audio `BUFFER_FLUSHED`
-    ignored.
+  - Event gate: `null` before any video `BUFFER_APPENDED`; after one
+    video `BUFFER_APPENDED`, gate opens. Audio `BUFFER_APPENDED`
+    ignored. Media `seeking` re-arms. Video `BUFFER_FLUSHED` re-arms.
+    Audio `BUFFER_FLUSHED` ignored.
   - Threshold gate: `null` when `frontBuffer < maxSegmentDuration`,
-    even after event gate is open (small-tail-segment case).
+    even after event gate is open. Covers both the small-tail-segment
+    case and the init-segment-only case (init append flips event gate
+    but adds no buffered time).
   - BOLA math: correct argmax across buffer levels; monotonic
     preference shift toward higher streams as buffer grows.
   - Lifecycle: `destroy()` unbinds all three listeners.
