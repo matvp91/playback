@@ -4,29 +4,8 @@ import type { Player } from "../player";
 import type { VideoStream } from "../types/media";
 import { MediaType } from "../types/media";
 
-/**
- * BOLA paper minimum-buffer constant (arxiv 1601.06748). The buffer
- * level at which BOLA prefers the lowest-bitrate stream. A real-world
- * time constant — does not scale with `frontBufferLength`.
- */
 export const MINIMUM_BUFFER_S = 10;
 
-/**
- * BOLA scorer with a two-gate trust state machine.
- *
- * - **Event gate** (`isSteady_`): true once a video segment has been
- *   appended since the last reset. Cleared on video buffer flush or
- *   media `seeking`.
- * - **Threshold gate**: front buffer in seconds must reach at least
- *   one segment duration before BOLA's math runs.
- *
- * When either gate is closed, `getRecommendedStream()` returns
- * `null` and the controller falls back to throughput.
- *
- * Lifetime is tied to media attachment: `AbrController` constructs
- * a `BolaScorer` on `MEDIA_ATTACHED` and calls `destroy()` on
- * `MEDIA_DETACHING`.
- */
 export class BolaScorer {
   private player_: Player;
   private media_: HTMLMediaElement;

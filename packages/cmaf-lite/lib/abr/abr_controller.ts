@@ -1,8 +1,4 @@
-import type {
-  MediaAttachedEvent,
-  MediaDetachingEvent,
-  NetworkResponseEvent,
-} from "../events";
+import type { MediaAttachedEvent, NetworkResponseEvent } from "../events";
 import { Events } from "../events";
 import type { Player } from "../player";
 import type { VideoStream } from "../types/media";
@@ -15,81 +11,65 @@ import { ThroughputEstimator } from "./throughput_estimator";
 
 const log = Log.create("AbrController");
 
-type ActiveDriver = "throughput" | "bola";
-
-/**
- * Adaptive bitrate controller. Picks one of two drivers per
- * evaluation tick:
- *
- * - **Throughput**: highest stream fitting the current EWMA estimate
- *   (with upgrade/downgrade asymmetry). Active when buffer is low.
- * - **BOLA**: buffer-level utility scoring (BOLA-O). Active when
- *   buffer is comfortable. Falls back to throughput if its
- *   trust gate is closed.
- *
- * Selection between drivers is a buffer-fullness hysteresis anchored
- * to absolute seconds (`MINIMUM_BUFFER_S`).
- */
 export class AbrController {
   private player_: Player;
   private timer_: Timer;
   private throughput_: ThroughputEstimator;
   private bola_: BolaScorer | null = null;
-  private activeDriver_: ActiveDriver = "throughput";
+  private bolaActive_ = false;
 
   constructor(player: Player) {
     this.player_ = player;
-    const abr = player.getConfig().abr;
+
+    const { abr } = player.getConfig();
     this.throughput_ = new ThroughputEstimator(abr);
+
     this.timer_ = new Timer(() => this.evaluate_());
 
     this.player_.on(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
 
-    const media = player.getMedia();
-    if (media) {
-      this.bola_ = new BolaScorer(player, media);
-    }
-
     this.timer_.tickEvery(abr.evaluationInterval);
   }
 
-  /**
-   * Returns the current throughput estimate in bits/second. Falls
-   * back to `config.abr.defaultBandwidthEstimate` while the EWMA is
-   * undersampled — consumers always get a number.
-   */
   getThroughputEstimate(): number {
-    const abr = this.player_.getConfig().abr;
+    const { abr } = this.player_.getConfig();
     return this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
   }
 
   destroy() {
     this.timer_.stop();
+
     this.player_.off(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-    this.bola_?.destroy();
-    this.bola_ = null;
+
+    if (this.bola_) {
+      this.bola_.destroy();
+      this.bola_ = null;
+    }
   }
 
   private onNetworkResponse_ = (event: NetworkResponseEvent) => {
-    if (event.type !== NetworkRequestType.SEGMENT) {
-      return;
+    if (event.type === NetworkRequestType.SEGMENT) {
+      const { response } = event;
+      this.throughput_.sample(
+        response.durationSec,
+        response.arrayBuffer.byteLength,
+      );
     }
-    const { durationSec, arrayBuffer } = event.response;
-    this.throughput_.sample(durationSec, arrayBuffer.byteLength);
   };
 
   private onMediaAttached_ = (event: MediaAttachedEvent) => {
-    this.bola_?.destroy();
     this.bola_ = new BolaScorer(this.player_, event.media);
   };
 
-  private onMediaDetaching_ = (_event: MediaDetachingEvent) => {
-    this.bola_?.destroy();
-    this.bola_ = null;
+  private onMediaDetaching_ = () => {
+    if (this.bola_) {
+      this.bola_.destroy();
+      this.bola_ = null;
+    }
   };
 
   private evaluate_() {
@@ -101,7 +81,7 @@ export class AbrController {
     this.updateActiveDriver_();
 
     let pick: VideoStream | null = null;
-    if (this.activeDriver_ === "bola" && this.bola_) {
+    if (this.bolaActive_ && this.bola_) {
       pick = this.bola_.getRecommendedStream();
     }
     if (!pick) {
@@ -118,18 +98,17 @@ export class AbrController {
     const fbl = this.player_.getConfig().frontBufferLength;
     const frontBufferSec = this.player_.getBufferFullness() * fbl;
     if (frontBufferSec < MINIMUM_BUFFER_S) {
-      this.activeDriver_ = "throughput";
+      this.bolaActive_ = false;
     } else if (frontBufferSec > MINIMUM_BUFFER_S * 2) {
-      this.activeDriver_ = "bola";
+      this.bolaActive_ = true;
     }
-    // Otherwise: stay in current state (hysteresis dead zone).
   }
 
   private pickFromThroughput_(
     streams: VideoStream[],
     active: VideoStream | null,
   ): VideoStream | null {
-    const abr = this.player_.getConfig().abr;
+    const { abr } = this.player_.getConfig();
     const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
 
     let best: VideoStream | null = null;
