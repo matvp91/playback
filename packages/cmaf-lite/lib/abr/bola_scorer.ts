@@ -9,7 +9,7 @@ import { MediaType } from "../types/media";
  * level at which BOLA prefers the lowest-bitrate stream. A real-world
  * time constant — does not scale with `frontBufferLength`.
  */
-const MINIMUM_BUFFER_S = 10;
+export const MINIMUM_BUFFER_S = 10;
 
 /**
  * BOLA scorer with a two-gate trust state machine.

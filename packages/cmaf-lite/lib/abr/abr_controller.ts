@@ -10,17 +10,10 @@ import { MediaType } from "../types/media";
 import { NetworkRequestType } from "../types/net";
 import { Log } from "../utils/log";
 import { Timer } from "../utils/timer";
-import { BolaScorer } from "./bola_scorer";
+import { BolaScorer, MINIMUM_BUFFER_S } from "./bola_scorer";
 import { ThroughputEstimator } from "./throughput_estimator";
 
 const log = Log.create("AbrController");
-
-/**
- * The buffer threshold (in seconds) at which BOLA's math becomes
- * meaningful. From the BOLA paper. Used by the controller's
- * hysteresis to choose between Throughput and BOLA.
- */
-const MINIMUM_BUFFER_S = 10;
 
 type ActiveDriver = "throughput" | "bola";
 
@@ -122,13 +115,11 @@ export class AbrController {
   }
 
   private updateActiveDriver_() {
-    const fullness = this.player_.getBufferFullness();
     const fbl = this.player_.getConfig().frontBufferLength;
-    const lowMark = MINIMUM_BUFFER_S / fbl;
-    const highMark = (MINIMUM_BUFFER_S * 2) / fbl;
-    if (fullness < lowMark) {
+    const frontBufferSec = this.player_.getBufferFullness() * fbl;
+    if (frontBufferSec < MINIMUM_BUFFER_S) {
       this.activeDriver_ = "throughput";
-    } else if (fullness > highMark) {
+    } else if (frontBufferSec > MINIMUM_BUFFER_S * 2) {
       this.activeDriver_ = "bola";
     }
     // Otherwise: stay in current state (hysteresis dead zone).

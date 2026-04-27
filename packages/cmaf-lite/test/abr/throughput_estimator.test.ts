@@ -10,7 +10,6 @@ const TEST_CONFIG: AbrConfig = {
   fastHalfLife: 3,
   slowHalfLife: 9,
   minTotalBytes: 128_000,
-  droppedFramesThreshold: 0.15,
 };
 
 describe("ThroughputEstimator", () => {

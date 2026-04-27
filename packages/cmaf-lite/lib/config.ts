@@ -48,11 +48,6 @@ export interface AbrConfig {
    * `defaultBandwidthEstimate` to the EWMA estimate.
    */
   minTotalBytes: number;
-  /**
-   * Dropped frame ratio above which forces a
-   * downgrade.
-   */
-  droppedFramesThreshold: number;
 }
 
 /**
@@ -138,7 +133,6 @@ export const DEFAULT_CONFIG: PlayerConfig = {
     fastHalfLife: 3,
     slowHalfLife: 9,
     minTotalBytes: 128_000,
-    droppedFramesThreshold: 0.15,
   },
   preferences: [],
 };
