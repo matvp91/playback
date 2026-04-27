@@ -180,18 +180,16 @@ export class BolaScorer {
   constructor(player: Player, media: HTMLMediaElement);
   // null = startup abstain (controller falls back to throughput).
   getRecommendedStream(): VideoStream | null;
-  // Called by controller from NETWORK_RESPONSE handler for each
-  // loaded segment. Flips the "fresh data since reset" gate.
-  onSegmentLoaded(): void;
-  destroy(): void;                         // unbinds `seeking`
+  destroy(): void;                         // unbinds all listeners
 }
 ```
 
 `ThroughputEstimator` is fed via `sample()` from the controller's
-`NETWORK_RESPONSE` handler; in that same handler, the controller also
-calls `bola_?.onSegmentLoaded()`. `BolaScorer` binds the media
-element's `seeking` listener in its constructor and unbinds in
-`destroy()`. It reads streams / front buffer / config via `Player`.
+`NETWORK_RESPONSE` handler. `BolaScorer` binds three listeners in its
+constructor — `BUFFER_APPENDED` and `BUFFER_FLUSHED` on the player
+bus (filtered to video), and `seeking` on the media element — and
+unbinds them all in `destroy()`. It reads streams / front buffer /
+config via `Player`. No controller ↔ scorer callbacks.
 
 ## Driver Selection
 
@@ -266,41 +264,47 @@ File: `bola_scorer.ts` contains:
 ### State
 - `private player_: Player` — for state reads.
 - `private media_: HTMLMediaElement` — for the seeking listener.
-- `private hasSegmentSinceReset_: boolean = false` — flips false on
-  init/seek; flips true when controller calls `onSegmentLoaded()`.
+- `private isSteady_: boolean = false` — flips false on init / seek /
+  video buffer flush; flips true on first video `BUFFER_APPENDED`.
+
+### Listeners (bound in constructor, unbound in `destroy()`)
+
+| Source | Event | Effect |
+|---|---|---|
+| `player` (event bus) | `BUFFER_APPENDED` | if `e.type === SourceBufferMediaType.VIDEO`: `isSteady_ = true` |
+| `player` (event bus) | `BUFFER_FLUSHED` | if `e.type === SourceBufferMediaType.VIDEO`: `isSteady_ = false` |
+| `media` (HTMLMediaElement) | `seeking` | `isSteady_ = false` |
 
 ### Steady gate
 
 | From | To | Trigger |
 |---|---|---|
-| (init) | `hasSegmentSinceReset_ = false` | constructor |
-| `false` | `true` | controller calls `onSegmentLoaded()` (fired per segment NETWORK_RESPONSE) |
-| `true` | `false` | media `seeking` event fires |
+| (init) | `isSteady_ = false` | constructor |
+| `false` | `true` | first video `BUFFER_APPENDED` |
+| `true` | `false` | video `BUFFER_FLUSHED` or media `seeking` |
 
-While `hasSegmentSinceReset_` is false, `getRecommendedStream()`
-returns `null` — controller falls back to throughput. Once a segment
-loads, BOLA engages. Each seek re-arms the gate.
+While `isSteady_` is false, `getRecommendedStream()` returns `null` —
+controller falls back to throughput. Once a video segment is appended
+to the SourceBuffer, BOLA engages. Each seek (or video buffer flush)
+re-arms the gate.
 
-**Why this design?** It mirrors dash.js's `lastSegmentDurationS = NaN`
-sentinel (BolaRule.js:132) which is reset on seek (line 121, via
-`_clearBolaStateOnSeek`) and written by the
-`MEDIA_FRAGMENT_LOADED` handler (line 385). dash.js's
-`!isNaN(lastSegmentDurationS) && bufferLevel >= lastSegmentDurationS`
-gate semantically means "at least one segment has loaded since the
-last reset, and the buffer holds it." We collapse the boolean check
-(`!isNaN(...)`) into our `hasSegmentSinceReset_` and skip dash.js's
-secondary `bufferLevel >= duration` clause — it's largely redundant
-because the loaded segment IS in the buffer, and we'd otherwise have
-to thread segment duration through (re-introducing
-`getActiveStream()` reads).
+**Why `BUFFER_APPENDED`, not `NETWORK_RESPONSE`?** `NETWORK_RESPONSE`
+fires on download completion, before the bytes hit the SourceBuffer.
+`BUFFER_APPENDED` fires *after* the append succeeds — truthful "the
+segment is now contributing to playback" signal. This matches dash.js's
+intent (BolaRule.js:495 gates BOLA on `bufferLevel >=
+lastSegmentDurationS`, written by `MEDIA_FRAGMENT_LOADED`) using
+cmaf-lite's actually-buffered signal.
 
-**Why not just gate on a buffer threshold?** Considered (a)
-`frontBuffer >= maxSegmentDuration`, (b) `frontBuffer >=
-MINIMUM_BUFFER_S`, (c) one-tick gate. All three miss the
-seek-into-buffered-range case dash.js's NaN sentinel handles: buffer
-is high but no fresh segment has downloaded since seek, so BOLA's
-trust shouldn't yet be granted. Tracking actual load events catches
-that scenario.
+**Why also `BUFFER_FLUSHED`?** Defensive. cmaf-lite doesn't flush
+mid-playback in normal flows today, so this listener may not fire in
+practice. But future quality-switch flushing (dash.js-style fast
+switching), DRM key rotation, or recovery flows could emit it. The
+cost is one extra event handler; the benefit is forward-compatibility
+without future churn on this class.
+
+**Filter both player events for `MediaType.VIDEO`** — audio
+appends/flushes shouldn't move BOLA's state.
 
 Why this matches dash.js's three-trigger model:
 - **Initial → startup**: matches dash.js's `BOLA_STATE_STARTUP` at init.
@@ -312,8 +316,8 @@ Why this matches dash.js's three-trigger model:
 
 ```ts
 getRecommendedStream(): VideoStream | null
-  // Wait for at least one fresh segment since init/seek.
-  if (!this.hasSegmentSinceReset_) return null;
+  // Steady gate.
+  if (!this.isSteady_) return null;
 
   // Pull state via this.player_.
   // streams      = player.getStreams(MediaType.VIDEO)
@@ -326,20 +330,17 @@ getRecommendedStream(): VideoStream | null
   // Return streams[argmax_i (V*(vm_i - 1 + gp) - frontBuffer) / streams[i].bandwidth]
   //   where vm_i = log(streams[i].bandwidth) - lnS1 + 1.
 
-onSegmentLoaded(): void
-  // hasSegmentSinceReset_ = true
-
 destroy(): void
   // media_.removeEventListener("seeking", this.onSeeking_)
 ```
 
-### Why a `destroy()` (and a private seek handler)?
+### `destroy()`
 
-`BolaScorer` owns one event listener (`seeking` on the media element),
-bound in the constructor. `destroy()` unbinds it. The controller calls
-`destroy()` on `MEDIA_ATTACHING` (or in its own `destroy()` if media
-was still attached). The private `onSeeking_` handler simply sets
-`hasSegmentSinceReset_ = false`.
+`BolaScorer` owns three listeners — two on the player bus
+(`BUFFER_APPENDED`, `BUFFER_FLUSHED`) and one on the media element
+(`seeking`). `destroy()` unbinds all of them. The controller calls
+`destroy()` on `MEDIA_ATTACHING` (or from its own `destroy()` if media
+was still attached).
 
 ### Why a class with state (now), not the earlier function?
 
@@ -371,7 +372,8 @@ Responsibilities:
   attached at construction, also construct
   `BolaScorer(player, media)`.
 - Subscribe to `NETWORK_RESPONSE` → for segment responses, call
-  `throughput.sample(...)` and `bola_?.onSegmentLoaded()`.
+  `throughput.sample(...)`. (BolaScorer owns its own buffer-append
+  and seeking listeners; controller doesn't forward.)
 - Subscribe to `MEDIA_ATTACHED` → construct `BolaScorer(player, media)`.
 - Subscribe to `MEDIA_ATTACHING` → call `bola_.destroy()`, null
   `bola_`.
@@ -480,22 +482,22 @@ Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
   `min(fast, slow)` once over the threshold, invalid samples are
   ignored.
 - `bola_scorer.test.ts` — `getRecommendedStream()` returns `null`
-  before any `onSegmentLoaded()` call (gate closed); after one
-  `onSegmentLoaded()` call, BOLA runs and returns the argmax stream;
-  media `seeking` event re-arms the gate (next call returns `null`
-  until another `onSegmentLoaded()`); correct argmax across buffer
-  levels; monotonic preference shift toward higher streams as buffer
-  grows. Tests use a stub `Player` returning canned values from
-  `getStreams()`, `getBufferFullness()`, `getConfig()`, plus a fake
-  `HTMLMediaElement` for the seeking dispatch.
+  before any video `BUFFER_APPENDED` (gate closed); after one video
+  `BUFFER_APPENDED`, BOLA runs and returns the argmax stream; audio
+  `BUFFER_APPENDED` is ignored; media `seeking` re-arms the gate;
+  video `BUFFER_FLUSHED` re-arms the gate; audio `BUFFER_FLUSHED` is
+  ignored; `destroy()` unbinds all listeners; correct argmax across
+  buffer levels; monotonic preference shift toward higher streams as
+  buffer grows. Tests use a stub `Player` (with `on`/`off` event
+  bus + canned `getStreams()`/`getBufferFullness()`/`getConfig()`)
+  and a fake `HTMLMediaElement` for the seeking dispatch.
 - `abr_controller.test.ts` — hysteresis transitions (in fullness
   terms, anchored to `MINIMUM_BUFFER_S / fbl`), BOLA-null fallback to
   throughput, BolaScorer lifecycle (created on `MEDIA_ATTACHED`,
   destroyed on `MEDIA_ATTACHING`), throughput-pick logic
   (default-fallback on `getEstimate() === null`, upgrade/downgrade
   asymmetry, lowest-stream floor, no audio subtraction),
-  `NETWORK_RESPONSE → throughput.sample` and
-  `NETWORK_RESPONSE → bola.onSegmentLoaded` forwarding, `ADAPTATION`
+  `NETWORK_RESPONSE → throughput.sample` forwarding, `ADAPTATION`
   emission, `evaluate_` no-op on empty stream list,
   `getThroughputEstimate()` always returns a number.
 
