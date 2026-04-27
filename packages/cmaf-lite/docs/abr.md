@@ -1,110 +1,80 @@
 # Adaptive Bitrate (ABR)
 
 cmaf-lite includes a built-in ABR controller that automatically manages
-video quality during playback. It evaluates four independent rules and
-picks the most conservative result.
+video quality during playback. It runs **one of two drivers** per
+evaluation tick, selected by a buffer-fullness hysteresis.
 
-## Rules
+## Drivers
 
 ### Throughput
 
 Measures download speed using a dual EWMA (Exponential Weighted Moving
-Average) estimator. Picks the highest video stream that the network can
-sustain, with asymmetric thresholds to resist oscillation — it requires
-more headroom to upgrade than to stay at the current quality.
+Average) estimator. Picks the highest video stream that the network
+can sustain, with asymmetric thresholds to resist oscillation — it
+requires more headroom to upgrade than to stay at the current quality.
 
-Works best for: stable and moderately variable networks.
+Active when the buffer is low. Falls back to a configured default
+estimate while undersampled.
 
 ### BOLA (Buffer Optimized)
 
-Uses buffer level to score each quality tier. When the buffer is healthy,
-it favors higher quality. When the buffer is thin, it picks
-conservatively. Activates only after at least one segment duration has
-been buffered.
+Uses buffer level to score each quality tier (BOLA-O,
+arxiv 1601.06748). When the buffer is comfortable, BOLA favors higher
+quality; as the buffer drops, it shifts toward conservative picks.
 
-Works best for: fluctuating networks where throughput estimates lag
-behind reality.
+Active when the buffer is comfortable. Has a **two-gate trust state**:
+the gate stays closed (and the controller falls back to throughput)
+unless
 
-### Insufficient Buffer
+1. at least one video segment has been appended to the SourceBuffer
+   since the last reset (init/seek/flush), and
+2. the front buffer has reached at least one segment duration.
 
-Proportionally reduces quality when the buffer is low but not empty.
-Uses the formula `throughput × 0.7 × (bufferLevel / segmentDuration)`
-to compute a target bitrate. Abstains during startup.
+The gate is reset on media `seeking` and on video `BUFFER_FLUSHED`.
 
-Works best for: preventing rebuffering during temporary bandwidth dips.
+## Driver Selection
 
-### Dropped Frames
+A buffer-fullness hysteresis anchored to absolute seconds:
 
-Detects when the device cannot decode the current quality fast enough
-by monitoring the browser's dropped frame ratio. Steps down one quality
-level when the ratio exceeds the configured threshold.
+- `frontBuffer < 10s`  → **Throughput** (low buffer; safe pick).
+- `frontBuffer > 20s`  → **BOLA** (comfortable buffer; utility pick).
+- in between           → keep current driver (dead zone).
 
-Works best for: low-powered devices struggling with high resolutions.
+Initial driver is `Throughput` (buffer is 0 at startup).
 
-## How Rules Combine
+## Observability
 
-All rules run on every evaluation tick. Each proposes a video stream or
-abstains. The controller picks the stream with the lowest bandwidth
-among all proposals — the most conservative rule always wins.
+Two read-only methods on `Player`:
 
-During startup (before one segment duration is buffered), only the
-throughput rule and dropped frames rule are active. This ensures the
-initial quality is driven by the configured bandwidth estimate.
+- `getBufferFullness(): number` — 0..1, clamped. Front buffer in
+  seconds divided by `frontBufferLength`.
+- `getThroughputEstimate(): number` — current bits/second estimate
+  (default applied while undersampled).
 
 ## Configuration
 
-All settings live under the `abr` key in
-[`PlayerConfig`](/cmaf-lite/reference/cmaf-lite.playerconfig/).
-See [`AbrConfig`](/cmaf-lite/reference/cmaf-lite.abrconfig/)
-for the full list of options and their defaults.
+All settings live under the `abr` key in `PlayerConfig`. See
+`AbrConfig` for the full list of options and their defaults.
 
 ## Future Enhancements
 
 The following refinements are intentionally deferred.
 
+### Dropped frames
+
+A device-capability cap that downgrades quality when the browser's
+dropped-frame ratio is high. Removed in this refactor; will be
+restored as a separate concern (per-stream history) in a follow-up.
+
 ### BOLA placeholder buffer
 
-The original BOLA paper describes a virtual buffer that compensates for
-non-download delays (pauses, stalls, seek recovery). Without it, a
-user-initiated pause can make BOLA pick a lower quality when playback
-resumes because actual throughput samples have grown stale. A
-placeholder buffer decays gradually so BOLA sees a smoothly declining
-virtual buffer rather than a cliff.
+The original BOLA paper describes a virtual buffer that compensates
+for non-download delays (pauses, stalls, seek recovery). cmaf-lite is
+VOD-focused; the dual-driver model with hysteresis gives the same
+practical safety without the placeholder buffer's bookkeeping.
 
-Not implemented because cmaf-lite is VOD-focused and the conservative
-aggregation with the Throughput rule keeps the overall decision safe
-even if BOLA's score is temporarily pessimistic.
+### Abandon-fragment
 
-### BOLA startup mode
-
-A common refinement uses throughput-guided selection inside BOLA during
-startup until the buffer reaches one segment duration. Our BOLA rule
-abstains entirely below that threshold and lets the Throughput rule
-drive initial quality.
-
-The simpler approach works because the Throughput rule always runs. If
-a future change isolates rules, BOLA will need its own startup handling.
-
-### Insufficient-buffer hard zero
-
-Some implementations force the lowest quality when the buffer is
-completely empty, in addition to the proportional formula. We abstain
-when the buffer is below one segment duration, so near-zero buffer is
-only reachable between evaluations. With a high throughput estimate and
-a sudden buffer drop, the proportional formula could pick a non-lowest
-stream.
-
-Not implemented because rebuffering is imminent regardless in that
-scenario, and shortening the evaluation interval is a simpler mitigation
-if it becomes a real problem.
-
-### Per-representation dropped frame history
-
-A more precise approach tracks dropped frames per quality level and
-caps below the lowest bad level (with a minimum sample size). Our rule
-uses the global ratio from `getVideoPlaybackQuality()` and steps down
-one level when it exceeds the threshold.
-
-Not implemented because cmaf-lite does not flush the buffer on ABR
-switches, so frames from prior streams continue decoding into the new
-stream — we cannot cleanly attribute drops per stream.
+dash.js abandons in-flight downloads when bandwidth drops below the
+in-progress segment's bitrate. cmaf-lite's `NetworkService` has no
+in-flight progress events; deferred.
