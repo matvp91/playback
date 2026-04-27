@@ -288,9 +288,16 @@ class AbrController {
 ```
 
 `getThroughputEstimate()` delegates: `throughput.getEstimate() ??
-config.abr.defaultBandwidthEstimate`. `getFrontBuffer()` returns the
-seconds of video buffered ahead of the playback position (was
-`getBufferLevel`). `destroy()` stops the timer and unbinds listeners.
+config.abr.defaultBandwidthEstimate`.
+
+`getFrontBuffer()` (rename of today's `getBufferLevel`): returns the
+seconds of video buffered ahead of the current playback position.
+Implementation unchanged — uses `getBufferedEnd(buffered, currentTime,
+maxBufferHole)` over `player.getBuffered(MediaType.VIDEO)`. Returns
+`0` when there's no media element or no continuous range.
+
+`destroy()` stops the timer and unbinds the `NETWORK_RESPONSE`
+listener.
 
 Throughput-pick logic lives in a private controller method:
 
