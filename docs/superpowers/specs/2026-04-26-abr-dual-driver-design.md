@@ -38,8 +38,11 @@ This spec applies the same lessons at cmaf-lite scale.
 - One active driver per evaluation, selected by buffer level.
 - Dual EWMA throughput estimation isolated in `ThroughputEstimator`.
 - BOLA math unchanged in formula, isolated in `BolaScorer`.
-- Public `AbrController` API roughly unchanged (one rename:
-  `getBufferLevel()` → `getFrontBuffer()`).
+- `AbrController` public surface: existing methods retained
+  (`getThroughputEstimate`, `destroy`); `getBufferLevel()` renamed to
+  `getFrontBuffer()`; `getStreams`, `getActiveStream`, `getConfig`
+  added as thin player-passthroughs (used by `BolaScorer`, also
+  available to consumers).
 - Per-file module size stays small; flat layout.
 
 ## Non-goals
