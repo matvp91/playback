@@ -2,8 +2,8 @@ import { EventEmitter } from "@matvp91/eventemitter3";
 import type { PlayerConfig } from "../../lib/config";
 import { DEFAULT_CONFIG } from "../../lib/config";
 import type { EventMap } from "../../lib/events";
-import { MediaType } from "../../lib/types/media";
 import type { Stream, VideoStream } from "../../lib/types/media";
+import { MediaType } from "../../lib/types/media";
 import { createVideoSwitchingSet, createVideoTrack } from "./factories";
 
 export interface StubPlayer extends EventEmitter<EventMap> {
@@ -11,6 +11,7 @@ export interface StubPlayer extends EventEmitter<EventMap> {
   getActiveStream<T extends MediaType>(type: T): Stream<T> | null;
   getBufferFullness(): number;
   getConfig(): PlayerConfig;
+  getMedia(): HTMLMediaElement | null;
   setBufferFullness(value: number): void;
   setActiveVideoStream(stream: VideoStream | null): void;
   setVideoStreams(streams: VideoStream[]): void;
@@ -31,15 +32,20 @@ export function createStubPlayer(opts?: {
   const emitter = new EventEmitter<EventMap>();
   const methods: Omit<StubPlayer, keyof EventEmitter<EventMap>> = {
     getStreams<T extends MediaType>(type: T): Stream<T>[] {
-      if (type === MediaType.VIDEO) return videoStreams as Stream<T>[];
+      if (type === MediaType.VIDEO) {
+        return videoStreams as Stream<T>[];
+      }
       return [] as Stream<T>[];
     },
     getActiveStream<T extends MediaType>(type: T): Stream<T> | null {
-      if (type === MediaType.VIDEO) return activeVideo as Stream<T> | null;
+      if (type === MediaType.VIDEO) {
+        return activeVideo as Stream<T> | null;
+      }
       return null;
     },
     getBufferFullness: () => fullness,
     getConfig: () => config,
+    getMedia: () => null,
     setBufferFullness(value: number) {
       fullness = value;
     },

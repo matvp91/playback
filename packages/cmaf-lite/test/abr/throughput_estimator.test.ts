@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AbrConfig } from "../../lib/config";
 import { ThroughputEstimator } from "../../lib/abr/throughput_estimator";
+import type { AbrConfig } from "../../lib/config";
 
 const TEST_CONFIG: AbrConfig = {
   defaultBandwidthEstimate: 1_000_000,
