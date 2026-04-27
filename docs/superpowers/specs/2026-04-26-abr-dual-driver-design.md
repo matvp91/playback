@@ -38,11 +38,13 @@ This spec applies the same lessons at cmaf-lite scale.
 - One active driver per evaluation, selected by buffer level.
 - Dual EWMA throughput estimation isolated in `ThroughputEstimator`.
 - BOLA math unchanged in formula, isolated in `BolaScorer`.
-- `AbrController` public surface: existing methods retained
-  (`getThroughputEstimate`, `destroy`); `getBufferLevel()` renamed to
-  `getFrontBuffer()`; `getStreams`, `getActiveStream`, `getConfig`
-  added as thin player-passthroughs (used by `BolaScorer`, also
-  available to consumers).
+- `AbrController` is not exported from `index.ts` and has no external
+  consumers besides `Player.destroy()`. The class's surface is
+  **internal** — methods exist for `Player` lifecycle and for
+  `BolaScorer` to read state. Drop `getThroughputEstimate()` (no
+  callers); rename `getBufferLevel()` → `getFrontBuffer()`; add
+  narrow accessors for `BolaScorer` (`getStreams`, `getActiveStream`,
+  `getFrontBuffer`, `getFrontBufferLength`).
 - Per-file module size stays small; flat layout.
 
 ## Non-goals
@@ -87,9 +89,10 @@ The split:
   `NETWORK_RESPONSE` (→ `throughput.sample`), `MEDIA_ATTACHED` /
   `MEDIA_ATTACHING` (→ bind/unbind `seeking` on media), media
   `seeking` (→ `bola.onSeeking()`). Owns the timer, hysteresis, the
-  throughput-pick algorithm, and BOLA dispatch. Exposes thin
+  throughput-pick algorithm, and BOLA dispatch. Exposes narrow
   accessors (`getStreams`, `getActiveStream`, `getFrontBuffer`,
-  `getThroughputEstimate`) for `BolaScorer` and external consumers.
+  `getFrontBufferLength`) for `BolaScorer`. The class is not
+  exported from `index.ts`.
 
 **Two-layer "is BOLA representable" gate** (matches dash.js):
 
@@ -269,7 +272,7 @@ getRecommendedStream(): VideoStream | null
   // streams      = controller.getStreams()
   // active       = controller.getActiveStream()
   // frontBuffer  = controller.getFrontBuffer()
-  // fbl          = controller.getConfig().frontBufferLength
+  // fbl          = controller.getFrontBufferLength()
   // If !active or streams.length === 0, return null.
   // segDur = active.hierarchy.track.maxSegmentDuration
   //
@@ -334,22 +337,20 @@ Responsibilities:
   `pickFromThroughput_()` (with BOLA-null fallback to throughput) and
   emit `ADAPTATION` when the pick differs from the active stream.
 
-Public surface:
+Surface (intra-package; not exported from `index.ts`):
 
 ```ts
 class AbrController {
   constructor(player: Player);
-  getThroughputEstimate(): number;
-  getFrontBuffer(): number;                  // renamed from getBufferLevel()
-  getStreams(): VideoStream[];               // video streams
-  getActiveStream(): VideoStream | null;     // active video stream
-  getConfig(): PlayerConfig;                 // used by BolaScorer for frontBufferLength
+  // For Player lifecycle:
   destroy(): void;
+  // For BolaScorer state lookup:
+  getStreams(): VideoStream[];
+  getActiveStream(): VideoStream | null;
+  getFrontBuffer(): number;                  // renamed from getBufferLevel()
+  getFrontBufferLength(): number;            // PlayerConfig.frontBufferLength
 }
 ```
-
-`getThroughputEstimate()` returns
-`throughput.getEstimate() ?? config.abr.defaultBandwidthEstimate`.
 
 `getFrontBuffer()` (rename of today's `getBufferLevel`): returns the
 seconds of video buffered ahead of the current playback position.
@@ -357,14 +358,21 @@ Implementation unchanged — uses `getBufferedEnd(buffered, currentTime,
 maxBufferHole)` over `player.getBuffered(MediaType.VIDEO)`. Returns
 `0` when there's no media element or no continuous range.
 
-`getStreams()`, `getActiveStream()`, `getConfig()` — thin passthroughs
-to `player.getStreams(MediaType.VIDEO)`,
-`player.getActiveStream(MediaType.VIDEO)`, and `player.getConfig()`.
-Used by `BolaScorer` to read state without binding to `Player`.
+`getStreams()` and `getActiveStream()` — thin passthroughs to
+`player.getStreams(MediaType.VIDEO)` and
+`player.getActiveStream(MediaType.VIDEO)`. `getFrontBufferLength()` —
+returns `player.getConfig().frontBufferLength`.
 
 `destroy()` stops the timer, unbinds `NETWORK_RESPONSE`,
 `MEDIA_ATTACHED`, `MEDIA_ATTACHING`, and the media element's
 `seeking` listener.
+
+`getThroughputEstimate()` (existed in today's controller as a
+public-API hook) is **removed** — `AbrController` is not exported, so
+nothing outside the package can reach it. The single internal caller
+(`pickFromThroughput_`) reads
+`this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate`
+inline.
 
 ### Throughput-pick logic
 
@@ -418,7 +426,7 @@ Tests live in `packages/cmaf-lite/test/abr/`, mirroring `lib/abr/`.
   levels, monotonic preference shift toward higher streams as buffer
   grows. Tests use a stub `AbrController` that returns canned values
   from `getStreams()` / `getActiveStream()` / `getFrontBuffer()` /
-  `getConfig()`.
+  `getFrontBufferLength()`.
 - `abr_controller.test.ts` — hysteresis transitions, BOLA-null
   fallback to throughput, throughput-pick logic (default-fallback on
   `getEstimate() === null`, upgrade/downgrade asymmetry,
