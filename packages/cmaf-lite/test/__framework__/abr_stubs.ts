@@ -5,14 +5,18 @@ import type { EventMap } from "../../lib/events";
 import type { Stream, VideoStream } from "../../lib/types/media";
 import { MediaType } from "../../lib/types/media";
 import { createVideoSwitchingSet, createVideoTrack } from "./factories";
+import { createTimeRanges } from "./time_ranges";
 
 export interface StubPlayer extends EventEmitter<EventMap> {
   getStreams<T extends MediaType>(type: T): Stream<T>[];
   getActiveStream<T extends MediaType>(type: T): Stream<T> | null;
   getBufferFullness(): number;
+  getBuffered(type: MediaType): TimeRanges;
   getConfig(): PlayerConfig;
   getMedia(): HTMLMediaElement | null;
   setBufferFullness(value: number): void;
+  setBuffered(type: MediaType, ranges: TimeRanges): void;
+  setMedia(media: HTMLMediaElement | null): void;
   setActiveVideoStream(stream: VideoStream | null): void;
   setVideoStreams(streams: VideoStream[]): void;
   setConfig(config: PlayerConfig): void;
@@ -28,6 +32,8 @@ export function createStubPlayer(opts?: {
   let activeVideo = opts?.activeStream ?? null;
   let fullness = opts?.bufferFullness ?? 0;
   let config = opts?.config ?? DEFAULT_CONFIG;
+  let videoBuffered: TimeRanges = createTimeRanges();
+  let media: HTMLMediaElement | null = null;
 
   const emitter = new EventEmitter<EventMap>();
   const methods: Omit<StubPlayer, keyof EventEmitter<EventMap>> = {
@@ -44,10 +50,20 @@ export function createStubPlayer(opts?: {
       return null;
     },
     getBufferFullness: () => fullness,
+    getBuffered: (type: MediaType) =>
+      type === MediaType.VIDEO ? videoBuffered : createTimeRanges(),
     getConfig: () => config,
-    getMedia: () => null,
+    getMedia: () => media,
     setBufferFullness(value: number) {
       fullness = value;
+    },
+    setBuffered(type: MediaType, ranges: TimeRanges) {
+      if (type === MediaType.VIDEO) {
+        videoBuffered = ranges;
+      }
+    },
+    setMedia(value: HTMLMediaElement | null) {
+      media = value;
     },
     setActiveVideoStream(stream: VideoStream | null) {
       activeVideo = stream;
