@@ -42,7 +42,7 @@ describe("AbrController", () => {
   it("emits ADAPTATION on the eval timer tick when the pick changes", () => {
     vi.useFakeTimers();
 
-    const cfg = configWith({ minTotalBytes: 1_000, evaluationInterval: 1 });
+    const cfg = configWith({ minTotalBytes: 1_000, switchInterval: 0 });
     player.setConfig(cfg);
     // Active is the highest stream; default estimate (1 Mbps) only fits
     // the lowest. With buffer below lowMark, throughput drives. The pick
@@ -65,7 +65,7 @@ describe("AbrController", () => {
   it("does not emit ADAPTATION when the pick equals the active stream", () => {
     vi.useFakeTimers();
 
-    const cfg = configWith({ minTotalBytes: 1_000, evaluationInterval: 1 });
+    const cfg = configWith({ minTotalBytes: 1_000, switchInterval: 0 });
     player.setConfig(cfg);
     player.setActiveVideoStream(streams[0]!);
     player.setBufferFullness(0);
@@ -136,28 +136,60 @@ describe("AbrController", () => {
     controller.destroy();
   });
 
-  it("creates BolaScorer on MEDIA_ATTACHED, destroys on MEDIA_DETACHING", () => {
-    const controller = new AbrController(player as never);
-    const media = document.createElement("video");
-    const mediaSource = {} as MediaSource;
-
-    // Spy on player.off to confirm BolaScorer's listener cleanup happens.
+  it("subscribes to player events on construction, unsubscribes on destroy", () => {
+    const onSpy = vi.spyOn(player, "on");
     const offSpy = vi.spyOn(player, "off");
 
-    player.emit(Events.MEDIA_ATTACHED, { media, mediaSource });
-    // BolaScorer listens for BUFFER_APPENDED and BUFFER_FLUSHED — those
-    // listener bindings happened in the BolaScorer constructor.
+    const controller = new AbrController(player as never);
+    expect(onSpy).toHaveBeenCalledWith(
+      Events.NETWORK_RESPONSE,
+      expect.any(Function),
+    );
+    expect(onSpy).toHaveBeenCalledWith(
+      Events.BUFFER_APPENDED,
+      expect.any(Function),
+    );
+    expect(onSpy).toHaveBeenCalledWith(
+      Events.MEDIA_ATTACHED,
+      expect.any(Function),
+    );
+    expect(onSpy).toHaveBeenCalledWith(
+      Events.MEDIA_DETACHING,
+      expect.any(Function),
+    );
 
-    player.emit(Events.MEDIA_DETACHING, { media });
-    // BolaScorer.destroy() runs — should off() the two buffer events.
+    controller.destroy();
+    expect(offSpy).toHaveBeenCalledWith(
+      Events.NETWORK_RESPONSE,
+      expect.any(Function),
+    );
     expect(offSpy).toHaveBeenCalledWith(
       Events.BUFFER_APPENDED,
       expect.any(Function),
     );
     expect(offSpy).toHaveBeenCalledWith(
-      Events.BUFFER_FLUSHED,
+      Events.MEDIA_ATTACHED,
       expect.any(Function),
     );
+    expect(offSpy).toHaveBeenCalledWith(
+      Events.MEDIA_DETACHING,
+      expect.any(Function),
+    );
+  });
+
+  it("attaches and removes the media seeking listener", () => {
+    const controller = new AbrController(player as never);
+    const media = document.createElement("video");
+    const mediaSource = {} as MediaSource;
+
+    const addSpy = vi.spyOn(media, "addEventListener");
+    const removeSpy = vi.spyOn(media, "removeEventListener");
+
+    player.emit(Events.MEDIA_ATTACHED, { media, mediaSource });
+    expect(addSpy).toHaveBeenCalledWith("seeking", expect.any(Function));
+
+    player.emit(Events.MEDIA_DETACHING, { media });
+    expect(removeSpy).toHaveBeenCalledWith("seeking", expect.any(Function));
 
     controller.destroy();
   });
