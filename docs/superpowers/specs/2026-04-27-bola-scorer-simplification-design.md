@@ -64,6 +64,15 @@ and tighter coupling between the change and the response.
   config (30s) this is 30s/15s. Updated event-driven on
   `BUFFER_APPENDED`.
 - `BUFFER_FLUSHED` is no longer a reset trigger.
+- `AbrController`'s evaluation timer is fixed at 1 second
+  (hardcoded). The `evaluationInterval` config option is removed.
+- A new config option `abr.switchInterval` (seconds, default 8)
+  throttles actual switches: `evaluate_()` discards a non-null pick
+  if fewer than `switchInterval` seconds have elapsed since the last
+  emitted `ADAPTATION`. Decouples evaluation cadence (cheap, fast)
+  from switch cadence (visible, throttled). Preserves current
+  effective behavior at default config (8s minimum between
+  switches).
 - `bola_scorer.test.ts` constructor signature aligned with shipping
   code; `BUFFER_FLUSHED` tests removed; the `MINIMUM_BUFFER_S`
   threshold test is removed (the threshold no longer lives in
@@ -137,27 +146,43 @@ cleared by a concurrent seek.
 
 State adds:
 
-- (No new fields. `bolaActive_` already exists.)
+- `lastSwitchAt_: number` — timestamp (`performance.now()`) of the
+  last emitted `ADAPTATION`. Initialized to `-Infinity` (or `0`) so
+  the first switch is unthrottled. `bolaActive_` already exists.
 
-Lifecycle adds:
+Lifecycle changes:
 
 - Constructor subscribes to `BUFFER_APPENDED` in addition to the
   existing `NETWORK_RESPONSE`. This subscription happens *after*
   `new BolaScorer(player)` returns, so `BolaScorer`'s handler
   registers (and therefore fires) first.
-- `destroy()` unsubscribes the new `BUFFER_APPENDED` listener.
+- Timer is started at a hardcoded 1-second cadence
+  (`this.timer_.tickEvery(1)`). The `abr.evaluationInterval` config
+  read is removed.
+- `destroy()` unsubscribes the new `BUFFER_APPENDED` listener
+  (timer/throughput cleanup unchanged).
 
 Behavior changes:
 
-- New private `onBufferAppended_(event)` — runs `switchStrategy_()`.
-  No call into `BolaScorer`; that subsystem subscribes to the same
-  event independently.
+- New private `onBufferAppended_(event)` — filters on
+  `event.type === MediaType.VIDEO` (audio appends don't move video
+  buffer fullness), then runs `switchStrategy_()`. No call into
+  `BolaScorer`; that subsystem subscribes to the same event
+  independently and applies its own video filter.
 - `evaluate_()` no longer calls `switchStrategy_()`. The hysteresis
   state is updated event-driven; `evaluate_()` reads `bolaActive_`
   and asks BOLA or throughput accordingly.
-- `switchStrategy_()` thresholds change:
-  - on: `frontBuffer >= frontBufferLength`
-  - off: `frontBuffer < 0.5 * frontBufferLength`
+- `evaluate_()` throttles switches: after computing a `pick` that
+  differs from `activeStream`, it checks `now - lastSwitchAt_ >=
+  switchInterval * 1000`; if not, the pick is discarded (no emit).
+  When it does emit, it updates `lastSwitchAt_ = now`.
+- `switchStrategy_()` reads `getBufferFullness()` (already
+  video-only and normalized to `frontBufferLength`) and uses
+  unitless thresholds: on at `fullness >= 1.0`, off at
+  `fullness < 0.5`. No config-read inside the strategy; no
+  multiplication. Equivalent to the absolute thresholds 30s/15s at
+  default config, and stays correct under any user-set
+  `frontBufferLength`.
 - `MINIMUM_BUFFER_S` import removed.
 
 `evaluate_()` body shrinks to:
@@ -173,14 +198,18 @@ if (this.bolaActive_) {
 if (!pick) {
   pick = this.pickFromThroughput_(streams, activeStream);
 }
-if (pick && pick !== activeStream) {
-  log.info("Decision", pick);
-  this.player_.emit(Events.ADAPTATION, { stream: pick });
-}
+if (!pick || pick === activeStream) return;
+const now = performance.now();
+const { switchInterval } = this.player_.getConfig().abr;
+if (now - this.lastSwitchAt_ < switchInterval * 1000) return;
+this.lastSwitchAt_ = now;
+log.info("Decision", pick);
+this.player_.emit(Events.ADAPTATION, { stream: pick });
 ```
 
-The timer tick still drives the actual switch decision; only the
-hysteresis update has migrated to the event handler.
+The 1-second timer drives evaluation; the throttle keeps actual
+switches spaced by at least `switchInterval` seconds, regardless of
+how often the underlying state changes.
 
 ### Tests
 
@@ -235,13 +264,25 @@ hysteresis update has migrated to the event handler.
 
 ## Migration
 
-This is an internal refactor. Public API surface (`Player`,
-`PlayerConfig`, exported types) is unchanged. No behavior change is
-expected at default config; the hysteresis thresholds shift from
-10s/20s to 15s/30s, which is more conservative — BOLA engages later,
-disengages later. This is the intended effect of porting from
-`MINIMUM_BUFFER_S` (math constant) to `frontBufferLength` (target
-buffer).
+`PlayerConfig.abr` shape changes (breaking for any user that set
+`evaluationInterval`):
+
+- Removed: `abr.evaluationInterval` (timer is now hardcoded at 1s).
+- Added: `abr.switchInterval` (seconds, default `8` — preserves the
+  effective minimum-time-between-switches at default config).
+
+Other public surface (`Player` methods, exported types) is
+unchanged. The exported `MINIMUM_BUFFER_S` from `bola_scorer.ts` was
+only consumed by `AbrController`; no external consumers.
+
+Behavior at default config:
+
+- Hysteresis thresholds shift from 10s/20s (old) to 15s/30s (new) —
+  more conservative; BOLA engages later, disengages later. Intended
+  effect of porting from `MINIMUM_BUFFER_S` (math constant) to
+  `frontBufferLength` (target buffer).
+- Evaluation cadence increases (8s → 1s), but actual switch cadence
+  is unchanged (throttled to 8s by `switchInterval`).
 
 ## Open Questions
 
