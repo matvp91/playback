@@ -233,7 +233,12 @@ describe("AbrController", () => {
 
     it("latches once frontBuffer >= maxSegmentDuration on video append", () => {
       const { controller } = setup(25);
-      const cfg = configWith({ switchInterval: 0 });
+      // High default throughput so the BOLA upgrade isn't capped by the
+      // anti-oscillation guard — this test isolates the latch.
+      const cfg = configWith({
+        switchInterval: 0,
+        defaultBandwidthEstimate: 10_000_000,
+      });
       player.setConfig(cfg);
       player.setActiveVideoStream(streams[0]!);
       player.emit(Events.BUFFER_APPENDED, {
@@ -325,8 +330,11 @@ describe("AbrController", () => {
       });
     };
 
-    const evalAndPick = (controller: AbrController) => {
-      const cfg = configWith({ switchInterval: 0 });
+    const evalAndPick = (
+      controller: AbrController,
+      cfgOverrides: Partial<AbrConfig> = {},
+    ) => {
+      const cfg = configWith({ switchInterval: 0, ...cfgOverrides });
       player.setConfig(cfg);
       player.setActiveVideoStream(streams[0]!);
       const adaptations: VideoStream[] = [];
@@ -340,10 +348,14 @@ describe("AbrController", () => {
       const { controller } = setup();
       // 20s exactly = 2/3 * 30. useBola_ = true. With isBufferSteady_
       // also true (since 20s > maxSegDur 4s), BOLA drives. Buffer at
-      // 20s → BOLA picks an upper-tier stream, not lowest.
+      // 20s → BOLA picks an upper-tier stream, not lowest. High default
+      // throughput so the BOLA upgrade isn't capped by the
+      // anti-oscillation guard — this test isolates hysteresis entry.
       player.setBuffered(MediaType.VIDEO, createTimeRanges([0, 20]));
       append();
-      const adaptations = evalAndPick(controller);
+      const adaptations = evalAndPick(controller, {
+        defaultBandwidthEstimate: 10_000_000,
+      });
       expect(adaptations.length).toBeGreaterThan(0);
       expect(adaptations[0]).not.toBe(streams[0]);
     });
@@ -390,7 +402,12 @@ describe("AbrController", () => {
       media.currentTime = 10;
       // ahead = 25 - 10 = 15. In dead zone. useBola_ stays true.
       append();
-      const cfg = configWith({ switchInterval: 0 });
+      // High default throughput so BOLA's upgrade isn't capped by the
+      // anti-oscillation guard — this test isolates dead-zone behavior.
+      const cfg = configWith({
+        switchInterval: 0,
+        defaultBandwidthEstimate: 10_000_000,
+      });
       player.setConfig(cfg);
       player.setActiveVideoStream(streams[0]!);
       const adaptations: VideoStream[] = [];
@@ -472,7 +489,13 @@ describe("AbrController", () => {
         segment: streams[0]!.hierarchy.track.segments[0]!,
         data: new ArrayBuffer(0),
       });
-      const cfg = configWith({ switchInterval: 0 });
+      // High default throughput so BOLA's pick isn't capped by the
+      // anti-oscillation guard — these tests isolate the BOLA scoring
+      // math, not the throughput interaction.
+      const cfg = configWith({
+        switchInterval: 0,
+        defaultBandwidthEstimate: 10_000_000,
+      });
       player.setConfig(cfg);
       player.setActiveVideoStream(streams[0]!);
       const adaptations: VideoStream[] = [];
@@ -495,6 +518,94 @@ describe("AbrController", () => {
     it("prefers the highest stream at frontBufferLength", () => {
       const pick = drive(30);
       expect(pick).toBe(streams[2]);
+    });
+  });
+
+  describe("BOLA anti-oscillation guard", () => {
+    // Mirrors dash.js BolaRule.js: when buffer-driven BOLA wants to
+    // upgrade above what throughput sustains, cap at the throughput-safe
+    // pick (or stay at the current stream if even that would be a
+    // downgrade).
+    const setup = (frontBuffer: number) => {
+      vi.useFakeTimers();
+      const media = document.createElement("video");
+      Object.defineProperty(media, "currentTime", { value: 0 });
+      player.setMedia(media);
+      player.setBuffered(MediaType.VIDEO, createTimeRanges([0, frontBuffer]));
+      const controller = new AbrController(player as never);
+      player.emit(Events.MEDIA_ATTACHED, {
+        media,
+        mediaSource: {} as MediaSource,
+      });
+      // Open both BOLA gates.
+      player.emit(Events.BUFFER_APPENDED, {
+        type: MediaType.VIDEO,
+        segment: streams[0]!.hierarchy.track.segments[0]!,
+        data: new ArrayBuffer(0),
+      });
+      return controller;
+    };
+
+    const sampleThroughput = (bitsPerSecond: number) => {
+      // One sample collapses the EWMA to exactly bitsPerSecond.
+      const durationSec = 1;
+      const bytes = bitsPerSecond / 8;
+      player.emit(Events.NETWORK_RESPONSE, {
+        type: NetworkRequestType.SEGMENT,
+        response: {
+          durationSec,
+          arrayBuffer: new ArrayBuffer(bytes),
+          url: "x",
+          status: 200,
+          headers: new Headers(),
+        } as never,
+      });
+    };
+
+    it("caps a BOLA upgrade to the active stream when throughput cannot sustain any upgrade", () => {
+      // streams = [500k, 1.5M, 3M]. Active = streams[0]. Throughput
+      // estimate = 600 kbps — only streams[0] fits with 0.95 stay
+      // multiplier and no stream above it fits the 0.7 upgrade. BOLA at
+      // a 25s buffer would prefer streams[2]; the guard caps to active
+      // (streams[0]) so no switch is emitted.
+      const controller = setup(25);
+      const cfg = configWith({
+        switchInterval: 0,
+        minTotalBytes: 1_000,
+      });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[0]!);
+      sampleThroughput(600_000);
+
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+
+      expect(adaptations).toHaveLength(0);
+      controller.destroy();
+    });
+
+    it("caps a BOLA upgrade to the throughput-safe stream when throughput permits a partial upgrade", () => {
+      // streams = [500k, 1.5M, 3M]. Active = streams[0]. Throughput
+      // estimate = 2.4 Mbps — fits streams[1] for upgrade
+      // (1.5M <= 2.4M * 0.7 = 1.68M) but not streams[2]
+      // (3M > 1.68M). BOLA at 25s wants streams[2]; the guard caps to
+      // streams[1].
+      const controller = setup(25);
+      const cfg = configWith({
+        switchInterval: 0,
+        minTotalBytes: 1_000,
+      });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[0]!);
+      sampleThroughput(2_400_000);
+
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+
+      expect(adaptations).toEqual([streams[1]]);
+      controller.destroy();
     });
   });
 });

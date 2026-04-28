@@ -124,13 +124,32 @@ export class AbrController {
       return;
     }
     const activeStream = this.player_.getActiveStream(MediaType.VIDEO);
+    const throughputPick = this.pickFromThroughput_(streams, activeStream);
 
     let pick: VideoStream | null = null;
     if (this.isBufferSteady_ && this.useBola_) {
       pick = this.pickFromBola_(streams);
+      // BOLA-O anti-oscillation: when the buffer-derived pick wants to
+      // upgrade above what throughput sustains, cap at the throughput-safe
+      // pick (or stay at current if even that is a downgrade). Mirrors
+      // dash.js BolaRule.js. Without this, a sustained low-bandwidth
+      // regime keeps flipping between throughput's safe pick and BOLA's
+      // full-buffer pick.
+      if (
+        pick &&
+        activeStream &&
+        throughputPick &&
+        pick.bandwidth > activeStream.bandwidth &&
+        pick.bandwidth > throughputPick.bandwidth
+      ) {
+        pick =
+          throughputPick.bandwidth > activeStream.bandwidth
+            ? throughputPick
+            : activeStream;
+      }
     }
     if (!pick) {
-      pick = this.pickFromThroughput_(streams, activeStream);
+      pick = throughputPick;
     }
     if (!pick || pick === activeStream) {
       return;
