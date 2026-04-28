@@ -32,7 +32,6 @@ describe("AbrController", () => {
     player = createStubPlayer({
       streams,
       activeStream: streams[0]!,
-      bufferFullness: 0,
     });
   });
 
@@ -50,7 +49,6 @@ describe("AbrController", () => {
     // the lowest. With buffer below lowMark, throughput drives. The pick
     // is a downgrade to streams[0].
     player.setActiveVideoStream(streams[2]!);
-    player.setBufferFullness(0);
 
     const adaptations: VideoStream[] = [];
     player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
@@ -70,7 +68,6 @@ describe("AbrController", () => {
     const cfg = configWith({ minTotalBytes: 1_000, switchInterval: 0 });
     player.setConfig(cfg);
     player.setActiveVideoStream(streams[0]!);
-    player.setBufferFullness(0);
 
     const adaptations: VideoStream[] = [];
     player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
