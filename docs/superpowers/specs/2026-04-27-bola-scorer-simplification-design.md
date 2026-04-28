@@ -59,10 +59,26 @@ and tighter coupling between the change and the response.
 - No internal cache of the recommendation — recompute on demand.
 - `MINIMUM_BUFFER_S` becomes a private math-only constant inside
   `BolaScorer`. Removed from the export.
-- Hysteresis thresholds derive from `frontBufferLength`: on at
-  `frontBufferLength`, off at `0.5 * frontBufferLength`. With default
-  config (30s) this is 30s/15s. Updated event-driven on
-  `BUFFER_APPENDED`.
+- Hysteresis thresholds derive from `frontBufferLength` as fractions
+  below the fill cap: on at `(2/3) * frontBufferLength`, off at
+  `(1/3) * frontBufferLength`. With default config (30s) this is
+  20s/10s — identical to the previous `MINIMUM_BUFFER_S * 2` /
+  `MINIMUM_BUFFER_S` thresholds, just derived from `frontBufferLength`
+  instead of the BOLA math constant. The fractions sit below the
+  fill cap so the "on" threshold is actually reachable. Updated
+  event-driven on `BUFFER_APPENDED`.
+- New private method `AbrController.getFrontBuffer_(): number` —
+  takes no arguments, reads `this.player_` internally, returns
+  absolute video front-buffer in seconds (no clamp, no
+  normalization). Only used inside `AbrController`.
+- `BolaScorer` computes its own video front-buffer inline from
+  `media_` + `player_.getBuffered(VIDEO)` + `player_.getConfig()`
+  (the same primitives `getFrontBuffer_` uses). The two computations
+  are intentionally not shared — each subsystem stays encapsulated,
+  and the duplication is six lines.
+- `Player.getBufferFullness()` is removed (public API change). It
+  was only used internally; observability hooks for the buffer level
+  are no longer part of the public surface.
 - `BUFFER_FLUSHED` is no longer a reset trigger.
 - `AbrController`'s evaluation timer is fixed at 1 second
   (hardcoded). The `evaluationInterval` config option is removed.
@@ -117,15 +133,18 @@ Lifecycle:
 Public surface:
 
 - `getRecommendedStream(): VideoStream | null` — returns `null` if
-  `!isSteady_` or no streams. Otherwise runs the BOLA-O scoring loop
-  on current streams + current `frontBuffer` and returns the
-  highest-scoring stream. Recomputes every call.
+  `!isSteady_` or no streams. Otherwise reads `frontBuffer` (computed
+  inline from `media_` + `player_.getBuffered(VIDEO)` +
+  `player_.getConfig().maxBufferHole`) and runs the BOLA-O scoring
+  loop on current streams + that value, returning the highest-scoring
+  stream. Recomputes every call.
 - `destroy()`.
 
 Private handlers:
 
 - `onBufferAppended_(event)` — if `event.type !== MediaType.VIDEO`,
-  returns. Else reads `frontBuffer` and the lowest stream's
+  returns. Else reads `frontBuffer` (inline computation, same
+  primitives as in `getRecommendedStream`) and the lowest stream's
   `maxSegmentDuration`; if `frontBuffer >= maxSegmentDuration`, sets
   `isSteady_ = true`. Once latched, never re-checked until reset.
 - `onMediaAttached_` / `onMediaDetaching_` — manage `media_` and the
@@ -138,9 +157,9 @@ Private constants:
 
 The `BUFFER_FLUSHED` listener is removed entirely. A flush implies an
 empty buffer, and the AbrController hysteresis already pulls back to
-throughput when `frontBuffer < 0.5 * frontBufferLength`. Once buffer
-rebuilds, `BUFFER_APPENDED` re-latches `isSteady_` if it had been
-cleared by a concurrent seek.
+throughput when `frontBuffer < (1/3) * frontBufferLength`. Once
+buffer rebuilds, `BUFFER_APPENDED` re-latches `isSteady_` if it had
+been cleared by a concurrent seek.
 
 ### `AbrController`
 
@@ -176,14 +195,34 @@ Behavior changes:
   differs from `activeStream`, it checks `now - lastSwitchAt_ >=
   switchInterval * 1000`; if not, the pick is discarded (no emit).
   When it does emit, it updates `lastSwitchAt_ = now`.
-- `switchStrategy_()` reads `getBufferFullness()` (already
-  video-only and normalized to `frontBufferLength`) and uses
-  unitless thresholds: on at `fullness >= 1.0`, off at
-  `fullness < 0.5`. No config-read inside the strategy; no
-  multiplication. Equivalent to the absolute thresholds 30s/15s at
-  default config, and stays correct under any user-set
-  `frontBufferLength`.
+- `switchStrategy_()` reads `this.getFrontBuffer_()` (private
+  method, returns absolute seconds, video-only, no clamp) and
+  compares against fractions of `frontBufferLength`: on at
+  `frontBuffer >= (2/3) * frontBufferLength`, off at `frontBuffer <
+  (1/3) * frontBufferLength`. At default 30s this is the same 20s/10s
+  band as before the refactor.
 - `MINIMUM_BUFFER_S` import removed.
+
+The `getFrontBuffer_()` helper is a private method on
+`AbrController`:
+
+```ts
+private getFrontBuffer_(): number {
+  const media = this.player_.getMedia();
+  if (!media) return 0;
+  const buffered = this.player_.getBuffered(MediaType.VIDEO);
+  const { maxBufferHole } = this.player_.getConfig();
+  const end = getBufferedEnd(buffered, media.currentTime, maxBufferHole);
+  if (end === null) return 0;
+  return end - media.currentTime;
+}
+```
+
+Same logic the old `Player.getBufferFullness()` had, minus the
+divide-by-`frontBufferLength` and the `Math.min(1, ...)` clamp.
+`BolaScorer` uses an inlined six-line equivalent in its handlers
+(see the `BolaScorer` section above) — the duplication is
+intentional to keep each subsystem self-contained.
 
 `evaluate_()` body shrinks to:
 
@@ -237,9 +276,11 @@ how often the underlying state changes.
 - Add a test that `BUFFER_APPENDED` updates `bolaActive_` according
   to the `frontBufferLength`-derived thresholds (event-driven
   hysteresis).
-- Update existing hysteresis tests to use the new thresholds (30s
-  on, 15s off with default config) and to drive transitions via
-  `BUFFER_APPENDED` rather than evaluation ticks.
+- Update existing hysteresis tests: thresholds remain 20s/10s at
+  default config (now derived as `(2/3)`/`(1/3)` of
+  `frontBufferLength` rather than `MINIMUM_BUFFER_S * 2` /
+  `MINIMUM_BUFFER_S`). Transitions are driven via `BUFFER_APPENDED`
+  rather than evaluation ticks.
 
 ### Docs
 
@@ -250,16 +291,19 @@ how often the underlying state changes.
   null until the front buffer has crossed `maxSegmentDuration` at
   least once since the last reset. The latch resets on media
   `seeking`."
-- Update `## Driver Selection` thresholds: `< 0.5 *
-  frontBufferLength` → Throughput, `>= frontBufferLength` → BOLA.
-  Note that the transition is checked on `BUFFER_APPENDED`, not on
-  every evaluation tick.
+- Update `## Driver Selection` thresholds: `< (1/3) *
+  frontBufferLength` → Throughput, `>= (2/3) * frontBufferLength` →
+  BOLA. With default `frontBufferLength = 30`, that's 10s/20s. Note
+  that the transition is checked on `BUFFER_APPENDED`, not on every
+  evaluation tick.
+- Drop the `getBufferFullness` bullet from the `## Observability`
+  section — that public method is removed in this refactor.
 - Add a bullet to `## Future Enhancements` for an
   `InsufficientBufferRule` equivalent: "BOLA can pick a stream that
   won't finish before underrun in low-buffer regimes. dash.js v5
   caps the pick by `safeThroughput * bufferLevel / fragmentDuration
   * 0.7` in a parallel rule (`InsufficientBufferRule.js`). Deferred;
-  cmaf-lite's hysteresis (Throughput active below 15s) provides
+  cmaf-lite's hysteresis (Throughput active below 10s) provides
   partial coverage."
 
 ## Migration
@@ -271,16 +315,24 @@ how often the underlying state changes.
 - Added: `abr.switchInterval` (seconds, default `8` — preserves the
   effective minimum-time-between-switches at default config).
 
+`Player.getBufferFullness()` is also removed (public API change).
+It was used by `AbrController` and `BolaScorer` internally, plus
+documented as an observability hook. Internal callers are migrated
+to `getFrontBuffer_()` / inlined equivalents; external callers (if
+any) lose the hook.
+
+The exported `MINIMUM_BUFFER_S` from `bola_scorer.ts` was only
+consumed by `AbrController`; no external consumers.
+
 Other public surface (`Player` methods, exported types) is
-unchanged. The exported `MINIMUM_BUFFER_S` from `bola_scorer.ts` was
-only consumed by `AbrController`; no external consumers.
+unchanged.
 
 Behavior at default config:
 
-- Hysteresis thresholds shift from 10s/20s (old) to 15s/30s (new) —
-  more conservative; BOLA engages later, disengages later. Intended
-  effect of porting from `MINIMUM_BUFFER_S` (math constant) to
-  `frontBufferLength` (target buffer).
+- Hysteresis thresholds remain 20s/10s — same as before the refactor,
+  now derived as `(2/3)`/`(1/3)` of `frontBufferLength` rather than
+  `MINIMUM_BUFFER_S * 2` / `MINIMUM_BUFFER_S`. Identical effective
+  behavior; cleaner derivation.
 - Evaluation cadence increases (8s → 1s), but actual switch cadence
   is unchanged (throttled to 8s by `switchInterval`).
 
