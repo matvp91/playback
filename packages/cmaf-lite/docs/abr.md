@@ -22,32 +22,29 @@ Uses buffer level to score each quality tier (BOLA-O,
 arxiv 1601.06748). When the buffer is comfortable, BOLA favors higher
 quality; as the buffer drops, it shifts toward conservative picks.
 
-Active when the buffer is comfortable. Has a **two-gate trust state**:
-the gate stays closed (and the controller falls back to throughput)
-unless
-
-1. at least one video segment has been appended to the SourceBuffer
-   since the last reset (init/seek/flush), and
-2. the front buffer has reached at least one segment duration.
-
-The gate is reset on media `seeking` and on video `BUFFER_FLUSHED`.
+A one-shot `isBufferSteady` latch gates BOLA's scoring: false until
+the front buffer has crossed `maxSegmentDuration` at least once since
+the last reset. The latch resets on media `seeking`. Below this
+threshold, BOLA returns no recommendation and the controller falls
+back to throughput.
 
 ## Driver Selection
 
-A buffer-fullness hysteresis anchored to absolute seconds:
+A buffer-fullness hysteresis derived from `frontBufferLength` as
+fractions below the fill cap:
 
-- `frontBuffer < 10s`  → **Throughput** (low buffer; safe pick).
-- `frontBuffer > 20s`  → **BOLA** (comfortable buffer; utility pick).
-- in between           → keep current driver (dead zone).
+- `frontBuffer < (1/3) * frontBufferLength`  → **Throughput**.
+- `frontBuffer >= (2/3) * frontBufferLength` → **BOLA**.
+- in between → keep current driver (dead zone).
 
+With default `frontBufferLength = 30`, that's 10s/20s. The transition
+is checked on `BUFFER_APPENDED`, not on every evaluation tick.
 Initial driver is `Throughput` (buffer is 0 at startup).
 
 ## Observability
 
-Two read-only methods on `Player`:
+One read-only method on `Player`:
 
-- `getBufferFullness(): number` — 0..1, clamped. Front buffer in
-  seconds divided by `frontBufferLength`.
 - `getThroughputEstimate(): number` — current bits/second estimate
   (default applied while undersampled).
 
@@ -78,3 +75,11 @@ practical safety without the placeholder buffer's bookkeeping.
 dash.js abandons in-flight downloads when bandwidth drops below the
 in-progress segment's bitrate. cmaf-lite's `NetworkService` has no
 in-flight progress events; deferred.
+
+### InsufficientBufferRule
+
+BOLA can pick a stream that won't finish before underrun in
+low-buffer regimes. dash.js v5 caps the pick by
+`safeThroughput * bufferLevel / fragmentDuration * 0.7` in a parallel
+rule (`InsufficientBufferRule.js`). Deferred; cmaf-lite's hysteresis
+(Throughput active below 10s) provides partial coverage.
