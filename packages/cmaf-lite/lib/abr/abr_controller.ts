@@ -127,7 +127,7 @@ export class AbrController {
 
     let pick: VideoStream | null = null;
     if (this.isBufferSteady_ && this.useBola_) {
-      pick = this.pickBolaStream_(streams, this.getFrontBuffer_());
+      pick = this.pickFromBola_(streams);
     }
     if (!pick) {
       pick = this.pickFromThroughput_(streams, activeStream);
@@ -147,15 +147,13 @@ export class AbrController {
     this.player_.emit(Events.ADAPTATION, { stream: pick });
   }
 
-  private pickBolaStream_(
-    streams: VideoStream[],
-    frontBuffer: number,
-  ): VideoStream | null {
+  private pickFromBola_(streams: VideoStream[]): VideoStream | null {
     const lowest = streams[0];
     const highest = streams[streams.length - 1];
     if (!lowest || !highest) {
       return null;
     }
+    const frontBuffer = this.getFrontBuffer_();
     const fbl = this.player_.getConfig().frontBufferLength;
 
     const lnS1 = Math.log(lowest.bandwidth);
@@ -186,7 +184,7 @@ export class AbrController {
 
   private pickFromThroughput_(
     streams: VideoStream[],
-    active: VideoStream | null,
+    activeStream: VideoStream | null,
   ): VideoStream | null {
     const { abr } = this.player_.getConfig();
     const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
@@ -194,9 +192,9 @@ export class AbrController {
     let best: VideoStream | null = null;
     for (const stream of streams) {
       let scaled = bw;
-      if (active) {
+      if (activeStream) {
         scaled *=
-          stream.bandwidth > active.bandwidth
+          stream.bandwidth > activeStream.bandwidth
             ? abr.bandwidthUpgradeTarget
             : abr.bandwidthDowngradeTarget;
       }
