@@ -73,7 +73,7 @@ export function createStubPlayer(opts?: {
 /**
  * Helper to build a video stream with a given bandwidth, sharing
  * a default track + switching set. The `hierarchy.track` reference
- * is what `BolaScorer` reads for `maxSegmentDuration`.
+ * is what `AbrController` reads for `maxSegmentDuration`.
  */
 export function makeVideoStream(
   bandwidth: number,

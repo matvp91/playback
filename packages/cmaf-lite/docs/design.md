@@ -92,7 +92,8 @@ keep playback moving.
 Selects one of two drivers per evaluation tick — Throughput (dual
 EWMA) or BOLA (buffer utility) — via a buffer-fullness hysteresis.
 Owns the eval loop, the throughput-pick algorithm, and the
-`BolaScorer` lifecycle. See [abr.md](abr.md) for details.
+inlined BOLA scoring with its `isBufferSteady` latch and `useBola`
+hysteresis. See [abr.md](abr.md) for details.
 
 ## Network Layer
 
