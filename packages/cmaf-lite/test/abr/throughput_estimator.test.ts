@@ -6,7 +6,7 @@ const TEST_CONFIG: AbrConfig = {
   defaultBandwidthEstimate: 1_000_000,
   bandwidthUpgradeTarget: 0.7,
   bandwidthDowngradeTarget: 0.95,
-  evaluationInterval: 8,
+  switchInterval: 8,
   fastHalfLife: 3,
   slowHalfLife: 9,
   minTotalBytes: 128_000,
