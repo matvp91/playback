@@ -198,6 +198,7 @@ describe("AbrController", () => {
 
   describe("isBufferSteady_ latch", () => {
     const setup = (frontBuffer: number) => {
+      vi.useFakeTimers();
       const media = document.createElement("video");
       Object.defineProperty(media, "currentTime", { value: 0 });
       player.setMedia(media);
@@ -213,22 +214,27 @@ describe("AbrController", () => {
     };
 
     it("does not latch when frontBuffer < maxSegmentDuration", () => {
-      // streams[0].maxSegmentDuration = 4 by default
+      // streams[0].maxSegmentDuration = 4 by default; frontBuffer = 2 < 4.
+      // isBufferSteady_ stays false → BOLA cannot drive. Throughput drives
+      // instead. With streams[2] active and default 1 Mbps estimate the
+      // throughput driver downgrades to streams[0].
       const { controller } = setup(2);
+      const cfg = configWith({ switchInterval: 0 });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[2]!);
       player.emit(Events.BUFFER_APPENDED, {
         type: MediaType.VIDEO,
         segment: streams[0]!.hierarchy.track.segments[0]!,
         data: new ArrayBuffer(0),
       });
-      // Indirectly verify via evaluate behavior: with !isBufferSteady_,
-      // BOLA can't drive even if useBola_ were true. Since useBola_ also
-      // requires high buffer (>= 20s), neither gate opens here.
-      // We assert the throughput path drove (no error, no crash).
-      expect(() => controller.destroy()).not.toThrow();
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+      expect(adaptations[0]).toBe(streams[0]);
+      controller.destroy();
     });
 
     it("latches once frontBuffer >= maxSegmentDuration on video append", () => {
-      vi.useFakeTimers();
       const { controller } = setup(25);
       const cfg = configWith({ switchInterval: 0 });
       player.setConfig(cfg);
@@ -248,20 +254,27 @@ describe("AbrController", () => {
     });
 
     it("ignores audio BUFFER_APPENDED for the latch", () => {
+      // Audio append must not set isBufferSteady_. With the latch false,
+      // BOLA cannot drive; throughput drives instead. With streams[2] active
+      // and default 1 Mbps estimate the throughput driver downgrades to
+      // streams[0].
       const { controller } = setup(25);
+      const cfg = configWith({ switchInterval: 0 });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[2]!);
       player.emit(Events.BUFFER_APPENDED, {
         type: MediaType.AUDIO,
         segment: streams[0]!.hierarchy.track.segments[0]!,
         data: new ArrayBuffer(0),
       });
-      // No video append, so isBufferSteady_ stays false. Verifying via
-      // a follow-up evaluate would require a video append — instead we
-      // just confirm no crash and clean teardown.
-      expect(() => controller.destroy()).not.toThrow();
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+      expect(adaptations[0]).toBe(streams[0]);
+      controller.destroy();
     });
 
     it("resets on media seeking", () => {
-      vi.useFakeTimers();
       const { controller, media } = setup(25);
       const cfg = configWith({ switchInterval: 0 });
       player.setConfig(cfg);
