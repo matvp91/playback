@@ -37,8 +37,12 @@ export interface AbrConfig {
    * quality.
    */
   bandwidthDowngradeTarget: number;
-  /** Seconds between ABR evaluations. */
-  evaluationInterval: number;
+  /**
+   * Minimum seconds between consecutive `ADAPTATION` emits. The ABR
+   * evaluator runs on a fixed 1-second tick; this throttle gates the
+   * actual switch decision so users don't see rapid quality flips.
+   */
+  switchInterval: number;
   /** EWMA fast estimator half-life in seconds. */
   fastHalfLife: number;
   /** EWMA slow estimator half-life in seconds. */
@@ -129,7 +133,7 @@ export const DEFAULT_CONFIG: PlayerConfig = {
     defaultBandwidthEstimate: 1_000_000,
     bandwidthUpgradeTarget: 0.7,
     bandwidthDowngradeTarget: 0.95,
-    evaluationInterval: 8,
+    switchInterval: 8,
     fastHalfLife: 3,
     slowHalfLife: 9,
     minTotalBytes: 128_000,
