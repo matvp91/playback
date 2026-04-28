@@ -1,303 +1,259 @@
-# BolaScorer Simplification
+# ABR BOLA Inlining
 
 ## Overview
 
-Restructure `BolaScorer` and its integration in `AbrController` so
-that responsibilities are cleanly separated: `BolaScorer` answers
-"given current state, what does BOLA recommend?", and `AbrController`
-owns driver selection. Both subsystems subscribe to the events they
-need independently. Aligns the boundary with dash.js v5 while keeping
-cmaf-lite's smaller surface.
+Dissolve `BolaScorer` as a separate class and inline its logic into
+`AbrController`. After the dust settles from the dual-driver
+restructure (e6243ac…461e0c8), the BolaScorer abstraction is paying
+its overhead twice: it owns event subscriptions in parallel with
+AbrController's own, and the public method surface
+(`getRecommendedStream`, contemplated `isActive`/`shouldSwitch`)
+keeps producing edge cases where the two methods can disagree.
+
+Once inlined, all ABR state lives in one place. The questions about
+"which method gates which" disappear because there are no public
+methods between `BolaScorer` and `AbrController` — just private
+state and private helpers.
 
 ## Motivation
 
-The current `BolaScorer` mixes three concerns inside a single
-`getRecommendedStream()` method:
+Three pain points compounded over the past iterations:
 
-- An event-driven latch (`isSteady_`, set on `BUFFER_APPENDED`,
-  cleared on `seeking` and `BUFFER_FLUSHED`).
-- A continuous threshold check (`frontBuffer >= maxSegmentDuration`).
-- The full BOLA-O scoring loop.
+1. **Surface duplication.** Both `BolaScorer` and `AbrController`
+   subscribe to `BUFFER_APPENDED`. Both compute the video front
+   buffer (the "duplication is six lines but each subsystem stays
+   self-contained" justification in the previous spec is a tell that
+   the abstraction isn't load-bearing). Both reason about
+   `frontBufferLength`.
 
-Two issues fall out:
+2. **Method-pair smell.** Once we considered exposing
+   `shouldSwitch()` (or `isActive()`) alongside `getRecommendedStream()`,
+   the two methods could disagree on edge cases (mainly empty
+   `streams`). The user surfaced this directly: "isActive but null
+   pick is essentially 'BOLA is not active'." The fix isn't to make
+   the methods agree — it's to not have the seam in the first place.
 
-1. The latch and the threshold check are doing different work — the
-   latch is "have we ever observed real data?", the threshold is "is
-   the buffer comfortable right now?" — but they share a return path
-   and aren't named accordingly.
-2. `MINIMUM_BUFFER_S = 10` serves a single role today (BOLA Vp/gp
-   calibration), but the file exports it for `AbrController` to use
-   as a hysteresis floor. dash.js v5 keeps these strictly separate:
-   `MINIMUM_BUFFER_S` is a math constant, the activation threshold is
-   `bufferTimeDefault`. Conflating them makes both harder to tune.
+3. **Naming churn.** `isSteady_`, `bolaActive_`, `shouldSwitch`,
+   `isActive` — each round produced a new round of names because
+   the meanings only made sense relative to a class boundary that
+   itself was unclear.
 
-`AbrController.evaluate_()` runs `switchStrategy_()` (the hysteresis)
-on every timer tick, even though the buffer level only changes on
-`BUFFER_APPENDED`. dash.js drives its equivalent transition off
-`BUFFER_LEVEL` events for the same reason — fewer redundant checks
-and tighter coupling between the change and the response.
+Inlining resolves all three. The class boundary disappears; the
+duplicated event subscriptions collapse to one; the named flags
+become private fields with no public API to reconcile.
 
 ## Goals
 
-- `BolaScorer` keeps its own event subscriptions for the state it
-  cares about (`BUFFER_APPENDED`, `MEDIA_ATTACHED`,
-  `MEDIA_DETACHING`) and its own `seeking` DOM listener. Public
-  surface narrows to `getRecommendedStream()` and `destroy()`.
-- `AbrController` adds a `BUFFER_APPENDED` subscription for its own
-  hysteresis update. It does not forward events to `BolaScorer`.
-  Both subsystems are independent subscribers to the same event.
-- Construction order is load-bearing: `AbrController` instantiates
-  `new BolaScorer(player)` *before* subscribing to its own player
-  events. `BolaScorer`'s `BUFFER_APPENDED` handler therefore fires
-  first, so `isSteady_` is current by the time `AbrController`'s
-  handler runs (defensive — neither handler currently reads the
-  other's state, but the ordering keeps that an option).
-- `isSteady_` re-introduced inside `BolaScorer` as the sole "have we
-  observed real data?" gate. Latched true when `frontBuffer >=
-  maxSegmentDuration` on a video `BUFFER_APPENDED`. Cleared on
-  media `seeking`.
-- No internal cache of the recommendation — recompute on demand.
-- `MINIMUM_BUFFER_S` becomes a private math-only constant inside
-  `BolaScorer`. Removed from the export.
-- Hysteresis thresholds derive from `frontBufferLength` as fractions
-  below the fill cap: on at `(2/3) * frontBufferLength`, off at
-  `(1/3) * frontBufferLength`. With default config (30s) this is
-  20s/10s — identical to the previous `MINIMUM_BUFFER_S * 2` /
-  `MINIMUM_BUFFER_S` thresholds, just derived from `frontBufferLength`
-  instead of the BOLA math constant. The fractions sit below the
-  fill cap so the "on" threshold is actually reachable. Updated
-  event-driven on `BUFFER_APPENDED`.
-- New private method `AbrController.getFrontBuffer_(): number` —
-  takes no arguments, reads `this.player_` internally, returns
-  absolute video front-buffer in seconds (no clamp, no
-  normalization). Only used inside `AbrController`.
-- `BolaScorer` computes its own video front-buffer inline from
-  `media_` + `player_.getBuffered(VIDEO)` + `player_.getConfig()`
-  (the same primitives `getFrontBuffer_` uses). The two computations
-  are intentionally not shared — each subsystem stays encapsulated,
-  and the duplication is six lines.
-- `Player.getBufferFullness()` is removed (public API change). It
-  was only used internally; observability hooks for the buffer level
-  are no longer part of the public surface.
-- `BUFFER_FLUSHED` is no longer a reset trigger.
-- `AbrController`'s evaluation timer is fixed at 1 second
-  (hardcoded). The `evaluationInterval` config option is removed.
+- `BolaScorer` class is removed. The file `lib/abr/bola_scorer.ts` is
+  deleted; the test file `test/abr/bola_scorer.test.ts` is deleted.
+- All BOLA logic lives inside `AbrController`:
+  - `isBufferSteady_: boolean` — latch. True once a video
+    `BUFFER_APPENDED` has fired with `frontBuffer >=
+    maxSegmentDuration`. Cleared on `seeking`. The "have we observed
+    real data?" gate.
+  - `useBola_: boolean` — hysteresis output. True when buffer is in
+    the BOLA-drives comfort band: enters at `frontBuffer >= (2/3) *
+    frontBufferLength`, exits at `frontBuffer < (1/3) *
+    frontBufferLength`. Updated on every video `BUFFER_APPENDED`.
+    Cleared on `seeking` (defensive — pre-seek state isn't relevant).
+  - Private `getFrontBuffer_()` — video front-buffer in seconds, no
+    clamp, no normalization.
+  - Private `pickBolaStream_(streams, frontBuffer)` — the BOLA-O
+    scoring loop. Pure: input → output, no internal state.
+  - `evaluate_()` (existing) — uses `pickBolaStream_` when
+    `isBufferSteady_ && useBola_`, falls back to `pickFromThroughput_`
+    otherwise. Throttled by `switchInterval` on emit.
+- `AbrController` subscribes to `BUFFER_APPENDED`, `MEDIA_ATTACHED`,
+  `MEDIA_DETACHING` (in addition to the existing `NETWORK_RESPONSE`).
+  It manages the media-element `seeking` listener directly. Single
+  event hub for all ABR state.
+- `BUFFER_FLUSHED` is not subscribed to. The hysteresis naturally
+  pulls back when a flushed buffer's next append shows low fill.
+- The evaluation timer is fixed at 1 second (hardcoded). The
+  `abr.evaluationInterval` config option is removed.
 - A new config option `abr.switchInterval` (seconds, default 8)
-  throttles actual switches: `evaluate_()` discards a non-null pick
-  if fewer than `switchInterval` seconds have elapsed since the last
-  emitted `ADAPTATION`. Decouples evaluation cadence (cheap, fast)
-  from switch cadence (visible, throttled). Preserves current
-  effective behavior at default config (8s minimum between
-  switches).
-- `bola_scorer.test.ts` constructor signature aligned with shipping
-  code; `BUFFER_FLUSHED` tests removed; the `MINIMUM_BUFFER_S`
-  threshold test is removed (the threshold no longer lives in
-  `BolaScorer`).
-- `docs/abr.md` updated to describe the single one-shot latch and the
-  `frontBufferLength`-derived hysteresis.
+  throttles emits: a non-null `pick` is discarded when fewer than
+  `switchInterval` seconds have elapsed since the last `ADAPTATION`.
+  Decouples evaluation cadence (cheap, fast) from switch cadence
+  (visible, throttled). Preserves the current 8s effective
+  minimum-between-switches at default config.
+- `Player.getBufferFullness()` is removed (public API change). With
+  no internal callers remaining outside `AbrController`'s private
+  helper, the public observability hook isn't pulling its weight.
+- `MINIMUM_BUFFER_S = 10` becomes a private constant inside
+  `abr_controller.ts` (Vp/gp math calibration only). Removed from
+  the previous re-export.
+- Hysteresis thresholds derive from `frontBufferLength` as fractions
+  *below* the fill cap: on at `(2/3) * frontBufferLength`, off at
+  `(1/3) * frontBufferLength`. With default `frontBufferLength = 30`
+  this is 20s/10s — the same effective band as the pre-refactor
+  `MINIMUM_BUFFER_S * 2 / MINIMUM_BUFFER_S` thresholds. The fractions
+  sit below the fill cap so the "on" threshold is reachable.
+- `docs/abr.md` updated to describe the inlined model and the
+  `frontBufferLength`-derived hysteresis. The "Observability" hook
+  for `getBufferFullness` is dropped.
 
 ## Non-goals
 
 - `InsufficientBufferRule` equivalent (BOLA's stall safety net in
-  dash.js). Acknowledged as a future enhancement; documented in
-  `docs/abr.md` alongside placeholder buffer / abandon-fragment.
+  dash.js). Deferred; documented in `docs/abr.md` Future
+  Enhancements alongside placeholder buffer / abandon-fragment.
 - `bufferTimeAtTopQuality` equivalent. cmaf-lite has a single
-  `frontBufferLength` target; per-quality buffer targets are not
-  introduced.
-- BOLA scoring math itself. The Vp/gp formulas, the +1 utility shift,
-  and the score expression all carry over verbatim.
-- Throughput estimator changes.
+  `frontBufferLength` target.
+- BOLA scoring math itself. The Vp/gp formulas, the +1 utility
+  shift, and the score expression all carry over verbatim from the
+  current `BolaScorer.getRecommendedStream`.
+- Throughput estimator changes (still in its own
+  `ThroughputEstimator` class — unlike BolaScorer, it's stateful
+  enough to earn the abstraction).
+- Public API surface beyond `Player.getBufferFullness()` and the
+  `abr.evaluationInterval` → `abr.switchInterval` config rename.
 
 ## Design
 
-### `BolaScorer`
+### `AbrController`
 
 State:
 
 - `player_: Player`
+- `throughput_: ThroughputEstimator`
+- `timer_: Timer`
 - `media_: HTMLMediaElement | null`
-- `isSteady_: boolean` — latched true on a video `BUFFER_APPENDED`
-  when `frontBuffer >= maxSegmentDuration`. Cleared on `seeking`.
+- `lastSwitchAt_: number` — `performance.now()` of the last emitted
+  `ADAPTATION`. Initialized to `-Infinity`.
+- `isBufferSteady_: boolean` — observed-data latch.
+- `useBola_: boolean` — hysteresis output.
 
 Lifecycle:
 
-- Constructor subscribes to `BUFFER_APPENDED`, `MEDIA_ATTACHED`, and
-  `MEDIA_DETACHING`. No subscription to `BUFFER_FLUSHED`.
-- `MEDIA_ATTACHED` stores `media_` and adds the `seeking` DOM
-  listener.
-- `MEDIA_DETACHING` removes the `seeking` listener and clears
+- Constructor subscribes to `NETWORK_RESPONSE`, `BUFFER_APPENDED`,
+  `MEDIA_ATTACHED`, `MEDIA_DETACHING`. Starts the 1-second timer.
+- `onMediaAttached_(event)` — stores `media_`; adds the `seeking`
+  DOM listener.
+- `onMediaDetaching_()` — removes the `seeking` listener; clears
   `media_`.
-- `destroy()` unsubscribes the player listeners and (if media is
-  attached) the `seeking` listener.
+- `destroy()` — unsubscribes all four player events, removes the
+  `seeking` listener if media is attached, stops the timer.
 
-Public surface:
-
-- `getRecommendedStream(): VideoStream | null` — returns `null` if
-  `!isSteady_` or no streams. Otherwise reads `frontBuffer` (computed
-  inline from `media_` + `player_.getBuffered(VIDEO)` +
-  `player_.getConfig().maxBufferHole`) and runs the BOLA-O scoring
-  loop on current streams + that value, returning the highest-scoring
-  stream. Recomputes every call.
-- `destroy()`.
-
-Private handlers:
+Event handlers:
 
 - `onBufferAppended_(event)` — if `event.type !== MediaType.VIDEO`,
-  returns. Else reads `frontBuffer` (inline computation, same
-  primitives as in `getRecommendedStream`) and the lowest stream's
-  `maxSegmentDuration`; if `frontBuffer >= maxSegmentDuration`, sets
-  `isSteady_ = true`. Once latched, never re-checked until reset.
-- `onMediaAttached_` / `onMediaDetaching_` — manage `media_` and the
-  `seeking` listener as described above.
-- `onSeeking_` — `isSteady_ = false`.
+  returns. Otherwise reads `frontBuffer` via `getFrontBuffer_()` and
+  the lowest stream's `maxSegmentDuration`, then:
+  1. Latch update: if `frontBuffer >= maxSegmentDuration`, sets
+     `isBufferSteady_ = true`. Once latched, never re-checked until
+     reset.
+  2. Hysteresis update: if `frontBuffer >= (2/3) * frontBufferLength`,
+     sets `useBola_ = true`. If `frontBuffer < (1/3) *
+     frontBufferLength`, sets `useBola_ = false`. Otherwise (in the
+     dead zone) keeps the current value.
+- `onSeeking_()` — sets `isBufferSteady_ = false`,
+  `useBola_ = false`. Both gates close; the next `BUFFER_APPENDED`
+  re-evaluates from scratch.
+- `onNetworkResponse_(event)` — existing throughput-sample logic.
 
-Private constants:
+Private helpers:
 
-- `MINIMUM_BUFFER_S = 10` — module-private, not exported.
+- `getFrontBuffer_(): number` — returns video front-buffer in
+  seconds:
 
-The `BUFFER_FLUSHED` listener is removed entirely. A flush implies an
-empty buffer, and the AbrController hysteresis already pulls back to
-throughput when `frontBuffer < (1/3) * frontBufferLength`. Once
-buffer rebuilds, `BUFFER_APPENDED` re-latches `isSteady_` if it had
-been cleared by a concurrent seek.
+  ```ts
+  private getFrontBuffer_(): number {
+    const media = this.media_;
+    if (!media) return 0;
+    const buffered = this.player_.getBuffered(MediaType.VIDEO);
+    const { maxBufferHole } = this.player_.getConfig();
+    const end = getBufferedEnd(buffered, media.currentTime, maxBufferHole);
+    if (end === null) return 0;
+    return end - media.currentTime;
+  }
+  ```
 
-### `AbrController`
+- `pickBolaStream_(streams: VideoStream[], frontBuffer: number):
+  VideoStream | null` — runs the BOLA-O scoring loop and returns
+  the highest-scoring stream. Pure (no `this` state read other than
+  `streams`/`frontBuffer` arguments). Body is the existing math
+  from `BolaScorer.getRecommendedStream`, lifted unchanged.
 
-State adds:
+- `pickFromThroughput_(streams, active)` — unchanged.
 
-- `lastSwitchAt_: number` — timestamp (`performance.now()`) of the
-  last emitted `ADAPTATION`. Initialized to `-Infinity` (or `0`) so
-  the first switch is unthrottled. `bolaActive_` already exists.
-
-Lifecycle changes:
-
-- Constructor subscribes to `BUFFER_APPENDED` in addition to the
-  existing `NETWORK_RESPONSE`. This subscription happens *after*
-  `new BolaScorer(player)` returns, so `BolaScorer`'s handler
-  registers (and therefore fires) first.
-- Timer is started at a hardcoded 1-second cadence
-  (`this.timer_.tickEvery(1)`). The `abr.evaluationInterval` config
-  read is removed.
-- `destroy()` unsubscribes the new `BUFFER_APPENDED` listener
-  (timer/throughput cleanup unchanged).
-
-Behavior changes:
-
-- New private `onBufferAppended_(event)` — filters on
-  `event.type === MediaType.VIDEO` (audio appends don't move video
-  buffer fullness), then runs `switchStrategy_()`. No call into
-  `BolaScorer`; that subsystem subscribes to the same event
-  independently and applies its own video filter.
-- `evaluate_()` no longer calls `switchStrategy_()`. The hysteresis
-  state is updated event-driven; `evaluate_()` reads `bolaActive_`
-  and asks BOLA or throughput accordingly.
-- `evaluate_()` throttles switches: after computing a `pick` that
-  differs from `activeStream`, it checks `now - lastSwitchAt_ >=
-  switchInterval * 1000`; if not, the pick is discarded (no emit).
-  When it does emit, it updates `lastSwitchAt_ = now`.
-- `switchStrategy_()` reads `this.getFrontBuffer_()` (private
-  method, returns absolute seconds, video-only, no clamp) and
-  compares against fractions of `frontBufferLength`: on at
-  `frontBuffer >= (2/3) * frontBufferLength`, off at `frontBuffer <
-  (1/3) * frontBufferLength`. At default 30s this is the same 20s/10s
-  band as before the refactor.
-- `MINIMUM_BUFFER_S` import removed.
-
-The `getFrontBuffer_()` helper is a private method on
-`AbrController`:
+`evaluate_()` (timer callback, runs every 1s):
 
 ```ts
-private getFrontBuffer_(): number {
-  const media = this.player_.getMedia();
-  if (!media) return 0;
-  const buffered = this.player_.getBuffered(MediaType.VIDEO);
-  const { maxBufferHole } = this.player_.getConfig();
-  const end = getBufferedEnd(buffered, media.currentTime, maxBufferHole);
-  if (end === null) return 0;
-  return end - media.currentTime;
+private evaluate_(): void {
+  const streams = this.player_.getStreams(MediaType.VIDEO);
+  if (streams.length === 0) return;
+  const active = this.player_.getActiveStream(MediaType.VIDEO);
+
+  let pick: VideoStream | null = null;
+  if (this.isBufferSteady_ && this.useBola_) {
+    pick = pickBolaStream_(streams, this.getFrontBuffer_());
+  }
+  if (!pick) {
+    pick = this.pickFromThroughput_(streams, active);
+  }
+  if (!pick || pick === active) return;
+
+  const now = performance.now();
+  const { switchInterval } = this.player_.getConfig().abr;
+  if (now - this.lastSwitchAt_ < switchInterval * 1000) return;
+
+  this.lastSwitchAt_ = now;
+  log.info("Decision", pick);
+  this.player_.emit(Events.ADAPTATION, { stream: pick });
 }
 ```
 
-Same logic the old `Player.getBufferFullness()` had, minus the
-divide-by-`frontBufferLength` and the `Math.min(1, ...)` clamp.
-`BolaScorer` uses an inlined six-line equivalent in its handlers
-(see the `BolaScorer` section above) — the duplication is
-intentional to keep each subsystem self-contained.
+Private constants in `abr_controller.ts`:
 
-`evaluate_()` body shrinks to:
-
-```ts
-const streams = this.player_.getStreams(MediaType.VIDEO);
-if (streams.length === 0) return;
-const activeStream = this.player_.getActiveStream(MediaType.VIDEO);
-let pick: VideoStream | null = null;
-if (this.bolaActive_) {
-  pick = this.bola_.getRecommendedStream();
-}
-if (!pick) {
-  pick = this.pickFromThroughput_(streams, activeStream);
-}
-if (!pick || pick === activeStream) return;
-const now = performance.now();
-const { switchInterval } = this.player_.getConfig().abr;
-if (now - this.lastSwitchAt_ < switchInterval * 1000) return;
-this.lastSwitchAt_ = now;
-log.info("Decision", pick);
-this.player_.emit(Events.ADAPTATION, { stream: pick });
-```
-
-The 1-second timer drives evaluation; the throttle keeps actual
-switches spaced by at least `switchInterval` seconds, regardless of
-how often the underlying state changes.
+- `MINIMUM_BUFFER_S = 10` — BOLA Vp/gp math parameter, used inside
+  `pickBolaStream_`. Module-private, not exported.
 
 ### Tests
 
-`packages/cmaf-lite/test/abr/bola_scorer.test.ts`:
+`packages/cmaf-lite/test/abr/bola_scorer.test.ts` — **deleted**.
 
-- Update constructor call to `new BolaScorer(player as never)` —
-  drop the `media` argument used by the current out-of-sync tests.
-  Emit `MEDIA_ATTACHED` from the stub player in `beforeEach` to
-  deliver the media element to `BolaScorer`.
-- Drop `video BUFFER_FLUSHED re-arms the event gate`.
-- Drop `audio BUFFER_FLUSHED does not affect the event gate`.
-- Drop `threshold gate closes when frontBuffer < maxSegmentDuration`
-  (the threshold is now in `AbrController`, not `BolaScorer`).
-- Keep, with the updated latch condition (`frontBuffer >=
-  maxSegmentDuration` checked at append time): `returns null before
-  any BUFFER_APPENDED`, `returns a stream after a video
-  BUFFER_APPENDED`, `ignores audio BUFFER_APPENDED`, `media seeking
-  re-arms the event gate`, plus the three math tests (low vs full
-  buffer pick, full-buffer prefers highest, monotonic preference).
-- `destroy()` test: assertion stays the same — events emitted after
-  `destroy()` are no-ops.
+`packages/cmaf-lite/test/abr/abr_controller.test.ts` — expanded to
+cover the now-inlined behavior:
 
-`packages/cmaf-lite/test/abr/abr_controller.test.ts`:
+- Latch tests: `isBufferSteady_` flips true on a video
+  `BUFFER_APPENDED` with `frontBuffer >= maxSegmentDuration`; stays
+  false on audio appends or low-buffer appends; cleared on
+  `seeking`.
+- Hysteresis tests: `useBola_` enters at `frontBuffer >= 20s` and
+  exits at `frontBuffer < 10s` (with default `frontBufferLength =
+  30`); stays in dead zone between; cleared on `seeking`.
+- Driver-selection tests: when both gates are open, `evaluate_()`
+  uses BOLA's pick; when either is closed, falls back to throughput.
+- BOLA math tests (lifted from the deleted file): low-buffer pick is
+  lower-bandwidth than full-buffer pick; full-buffer prefers highest
+  stream; monotonic preference as buffer grows.
+- Throttle test: two state changes within `switchInterval` produce
+  one emit; a third change after the interval emits again.
+- Lifecycle test: `destroy()` removes all four player listeners and
+  the `seeking` listener.
 
-- Add a test that `BUFFER_APPENDED` updates `bolaActive_` according
-  to the `frontBufferLength`-derived thresholds (event-driven
-  hysteresis).
-- Update existing hysteresis tests: thresholds remain 20s/10s at
-  default config (now derived as `(2/3)`/`(1/3)` of
-  `frontBufferLength` rather than `MINIMUM_BUFFER_S * 2` /
-  `MINIMUM_BUFFER_S`). Transitions are driven via `BUFFER_APPENDED`
-  rather than evaluation ticks.
+If `pickBolaStream_` ends up genuinely complex to test through
+integration, lift it to a top-level non-exported function in
+`abr_controller.ts` so tests can import it directly. Otherwise keep
+it as a private method.
 
 ### Docs
 
 `packages/cmaf-lite/docs/abr.md`:
 
 - Replace the `### BOLA (Buffer Optimized)` "two-gate trust state"
-  paragraph with a single one-shot-latch description: "BOLA returns
-  null until the front buffer has crossed `maxSegmentDuration` at
-  least once since the last reset. The latch resets on media
-  `seeking`."
+  paragraph with a single one-shot-latch description: "BOLA's
+  scoring is gated on a `isBufferSteady` latch — false until the
+  front buffer has crossed `maxSegmentDuration` at least once since
+  the last reset. The latch resets on media `seeking`."
 - Update `## Driver Selection` thresholds: `< (1/3) *
   frontBufferLength` → Throughput, `>= (2/3) * frontBufferLength` →
   BOLA. With default `frontBufferLength = 30`, that's 10s/20s. Note
   that the transition is checked on `BUFFER_APPENDED`, not on every
   evaluation tick.
 - Drop the `getBufferFullness` bullet from the `## Observability`
-  section — that public method is removed in this refactor.
+  section — that public method is removed.
 - Add a bullet to `## Future Enhancements` for an
   `InsufficientBufferRule` equivalent: "BOLA can pick a stream that
   won't finish before underrun in low-buffer regimes. dash.js v5
@@ -316,10 +272,10 @@ how often the underlying state changes.
   effective minimum-time-between-switches at default config).
 
 `Player.getBufferFullness()` is also removed (public API change).
-It was used by `AbrController` and `BolaScorer` internally, plus
-documented as an observability hook. Internal callers are migrated
-to `getFrontBuffer_()` / inlined equivalents; external callers (if
-any) lose the hook.
+It was previously documented as an observability hook; with no
+remaining internal callers, it's dropped from the public surface.
+
+`BolaScorer` was internal — its removal is invisible to consumers.
 
 The exported `MINIMUM_BUFFER_S` from `bola_scorer.ts` was only
 consumed by `AbrController`; no external consumers.
