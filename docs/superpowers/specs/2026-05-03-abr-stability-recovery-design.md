@@ -30,10 +30,12 @@ It stays as-is.
 
 - Stream stability: a single low-throughput sample must not trigger
   a quality drop while the front buffer can absorb it.
-- Recovery: after sustained buffer-healthy conditions, BOLA's pick
-  must be allowed to climb past the throughput-derived cap.
-- No new configuration knobs. Both behaviors derive entirely from
-  existing config (`frontBufferLength`, `slowHalfLife`).
+- Recovery: after the EWMA has caught up to a recovered network,
+  BOLA's pick must be allowed to climb to whatever the network
+  literally supports — not held back by the throughput driver's
+  conservative upgrade margin.
+- No new configuration knobs. Both behaviors derive from existing
+  state (`frontBufferLength`, the EWMA estimate itself).
 
 ## Non-goals
 
@@ -99,9 +101,10 @@ Behavioural consequences:
 `ThroughputEstimator.getEstimate()` is unchanged: still
 `Math.min(fast, slow)`, still null until `minTotalBytes` is exceeded.
 
-### 2. Lift the BOLA-O cap on sustained BOLA-active buffer
+### 2. Recalibrate the BOLA-O cap to raw EWMA capacity
 
-The current cap (in `evaluate_()`):
+The current cap (in `evaluate_()`) compares BOLA's pick to the
+*throughput driver's pick*:
 
 ```ts
 if (
@@ -117,61 +120,72 @@ if (
 }
 ```
 
-A new latch tracks how long `useBola_` has been continuously true:
+`throughputPick` itself folds in `bandwidthUpgradeTarget` (0.7),
+which means BOLA is held below "highest stream that fits under
+0.7 × estimate." That 43% headroom requirement is correct for the
+throughput driver's *own* upgrade decisions (single signal, must be
+conservative), but inappropriate as a cap on BOLA — BOLA's
+full-buffer signal already corroborates the EWMA. The over-cap is
+why a recovered network never lets BOLA reach the top tier.
 
-- `useBolaSinceMs_: number | null` — `performance.now()` at the
-  rising edge of `useBola_` (transition from `false` to `true`).
-  Set to `null` whenever `useBola_` becomes `false`, including on
-  `seeking`.
-
-The cap is bypassed once that duration meets or exceeds
-`slowHalfLife`:
+The fix introduces a separate helper that resolves BOLA's ceiling
+to "what the EWMA literally supports":
 
 ```ts
-const sustained =
-  this.useBolaSinceMs_ !== null &&
-  performance.now() - this.useBolaSinceMs_ >= abr.slowHalfLife * 1000;
+private throughputCap_(streams: VideoStream[]): VideoStream | null {
+  const { abr } = this.player_.getConfig();
+  const bw =
+    this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
+  let best: VideoStream | null = null;
+  for (const stream of streams) {
+    if (stream.bandwidth <= bw) {
+      best = stream;
+    }
+  }
+  return best ?? streams[0] ?? null;
+}
+```
 
+The cap comparison in `evaluate_()` switches from `throughputPick`
+to `throughputCap`:
+
+```ts
+const throughputCap = this.throughputCap_(streams);
 if (
-  !sustained &&
   pick &&
   activeStream &&
-  throughputPick &&
+  throughputCap &&
   pick.bandwidth > activeStream.bandwidth &&
-  pick.bandwidth > throughputPick.bandwidth
+  pick.bandwidth > throughputCap.bandwidth
 ) {
-  pick = throughputPick.bandwidth > activeStream.bandwidth
-    ? throughputPick
+  pick = throughputCap.bandwidth > activeStream.bandwidth
+    ? throughputCap
     : activeStream;
 }
 ```
 
-Rationale for tying the duration to `slowHalfLife`: after one slow
-EWMA half-life of post-recovery samples flowing in, the slow
-estimate has absorbed new values to ~50% influence. By that point
-the signal "buffer has stayed in the BOLA-active band" is the more
-reliable indicator of network capacity, and BOLA's pick should be
-trusted. The duration uses the seconds value of `slowHalfLife`
-directly — no multiplier, no new tunable.
+Two distinct questions, two distinct functions:
 
-The latch is updated wherever `useBola_` is mutated:
+- `pickFromThroughput_` — *the throughput driver's own decision*.
+  Conservative; uses `bandwidthUpgradeTarget` /
+  `bandwidthDowngradeTarget` to gate switches off a single signal.
+- `throughputCap_` — *the BOLA-O ceiling*. Direct; the highest
+  stream the EWMA estimate literally fits, with no margin on top.
+  BOLA's buffer signal is the second source of confirmation.
 
-- `onBufferAppended_`: when the hysteresis flips `useBola_` from
-  `false` to `true`, set `useBolaSinceMs_ = performance.now()`.
-  When it flips from `true` to `false`, clear it.
-- `onSeeking_`: clear it alongside the existing
-  `isBufferSteady_ = false` and `useBola_ = false`.
+Behavioural consequences:
 
-In a sustained low-bandwidth regime — where the buffer cannot stay
-in the BOLA band — `useBola_` flips back to `false` before
-`slowHalfLife` elapses, the latch resets, and the cap remains
-active. Oscillation prevention is preserved exactly as today for
-that case.
+- Sustained low-bandwidth regime: the EWMA settles at the actual
+  network rate, `throughputCap` resolves to the highest sustainable
+  stream, BOLA's full-buffer pick gets capped to that. Oscillation
+  prevented exactly as today.
+- Post-throttle recovery: as the EWMA climbs back, `throughputCap`
+  climbs with it. Each evaluation tick is permitted to step BOLA's
+  pick to the next tier the EWMA now supports. After EWMA recovery
+  plus a few `switchInterval` cooldowns, the player reaches top.
 
-In the transient-throttle case — where the buffer fills back to
-near `frontBufferLength` within seconds of unthrottle — `useBola_`
-stays `true` continuously. After `slowHalfLife` seconds the cap
-lifts, BOLA's full-buffer pick goes through, the player climbs.
+No new state, no new constants, no rising-edge tracking, no
+duration latch.
 
 ## Configuration
 
@@ -179,7 +193,7 @@ No changes to `AbrConfig` or `PlayerConfig`. All new behaviour is
 derived from:
 
 - `PlayerConfig.frontBufferLength` (sample weighting).
-- `AbrConfig.slowHalfLife` (cap-lift duration).
+- The EWMA estimate itself (BOLA-O cap).
 
 ## Testing
 
@@ -203,22 +217,25 @@ test for the new `weightFactor` parameter (a sample with
 `weightFactor = 0` is a no-op; a sample with `weightFactor = 0.5`
 moves the estimate half as much as `weightFactor = 1`).
 
-### BOLA-O cap lift on sustained `useBola_`
+### BOLA-O cap recalibrated to raw EWMA
 
-- The cap remains active while `useBola_` has been true for less
-  than `slowHalfLife` seconds — verify the post-throttle scenario
-  before the lift fires (BOLA pick is still capped).
-- After advancing fake timers past `slowHalfLife * 1000`, BOLA's
-  upgrade pick goes through uncapped.
-- A `seeking` event mid-wait resets the latch — verify the cap is
-  re-armed.
-- A `useBola_` flip back to `false` mid-wait resets the latch —
-  verify by setting buffer below the lower hysteresis, then back
-  above; the duration starts over.
+- Sustained low-bw: with EWMA settled at a low estimate, BOLA's
+  full-buffer pick is capped to the highest stream that fits under
+  the raw estimate (the new `throughputCap`), regardless of
+  `bandwidthUpgradeTarget`. Verify a streams=[200k, 1M, 3M, 5M]
+  setup with EWMA = 1M caps BOLA at the 1M tier.
+- Post-throttle recovery: with EWMA climbing across successive
+  ticks (simulated by injecting samples between timer advances),
+  BOLA's pick climbs one tier per tick up to top.
+- Edge: when EWMA exactly equals a stream's bitrate, that stream is
+  permitted (≤ comparison), so a 5M network reaches a 5M stream.
 
-Existing tests in `BOLA anti-oscillation guard` continue to pass —
-they all complete within a single 1.1s tick, well below
-`slowHalfLife`.
+The existing `BOLA anti-oscillation guard` tests need
+re-calibration: today they assert "throughput permits a partial
+upgrade to streams[1]" using `bandwidthUpgradeTarget`. Under the
+new cap, the same EWMA value (2.4M) directly permits streams[1]
+(1.5M ≤ 2.4M) — the assertion holds, the threshold reasoning
+shifts. Update test comments accordingly.
 
 ## Out of scope (deferred)
 
