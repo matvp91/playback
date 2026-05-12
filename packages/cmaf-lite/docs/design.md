@@ -89,11 +89,11 @@ keep playback moving.
 
 ### AbrController
 
-Selects one of two drivers per evaluation tick — Throughput (dual
-EWMA) or BOLA (buffer utility) — via a buffer-fullness hysteresis.
-Owns the eval loop, the throughput-pick algorithm, and the
-inlined BOLA scoring with its `isBufferSteady` latch and `useBola`
-hysteresis. See [abr.md](abr.md) for details.
+Runs a single decision flow per evaluation tick: a throughput-driven
+pick using a dual EWMA estimator, raised by a buffer-aware uplift
+when a `useBola` hysteresis confirms the buffer is comfortable.
+Owns the eval loop and the switch-emit throttle. See
+[abr.md](abr.md) for details.
 
 ## Network Layer
 

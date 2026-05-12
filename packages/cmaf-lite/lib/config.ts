@@ -38,12 +38,6 @@ export interface AbrConfig {
    */
   bandwidthDowngradeTarget: number;
   /**
-   * Throughput multiplier applied when computing the maximum
-   * sustainable bitrate from `bufferLevel / fragmentDuration`. Lower
-   * values reserve more headroom against underrun.
-   */
-  lowBufferSafetyFactor: number;
-  /**
    * Minimum seconds between consecutive `ADAPTATION` emits. The ABR
    * evaluator runs on a fixed 1-second tick; this throttle gates the
    * actual switch decision so users don't see rapid quality flips.
@@ -139,7 +133,6 @@ export const DEFAULT_CONFIG: PlayerConfig = {
     defaultBandwidthEstimate: 1_000_000,
     bandwidthUpgradeTarget: 0.7,
     bandwidthDowngradeTarget: 0.95,
-    lowBufferSafetyFactor: 0.7,
     switchInterval: 8,
     fastHalfLife: 3,
     slowHalfLife: 9,

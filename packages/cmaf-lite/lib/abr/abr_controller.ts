@@ -15,14 +15,11 @@ import { ThroughputEstimator } from "./throughput_estimator";
 
 const log = Log.create("AbrController");
 
-const MINIMUM_BUFFER_S = 10;
-
 export class AbrController {
   private player_: Player;
   private timer_: Timer;
   private throughput_: ThroughputEstimator;
   private media_: HTMLMediaElement | null = null;
-  private isBufferSteady_ = false;
   private useBola_ = false;
   private lastSwitchAt_ = -Infinity;
 
@@ -72,7 +69,6 @@ export class AbrController {
   };
 
   private onSeeking_ = () => {
-    this.isBufferSteady_ = false;
     this.useBola_ = false;
   };
 
@@ -91,11 +87,6 @@ export class AbrController {
       return;
     }
     const frontBuffer = this.getFrontBuffer_();
-    const streams = this.player_.getStreams(MediaType.VIDEO);
-    const lowest = streams[0];
-    if (lowest && frontBuffer >= lowest.hierarchy.track.maxSegmentDuration) {
-      this.isBufferSteady_ = true;
-    }
     const fbl = this.player_.getConfig().frontBufferLength;
     if (frontBuffer >= (2 / 3) * fbl) {
       this.useBola_ = true;
@@ -124,91 +115,12 @@ export class AbrController {
       return;
     }
     const activeStream = this.player_.getActiveStream(MediaType.VIDEO);
-    const throughputPick = this.pickFromThroughput_(streams, activeStream);
-
-    let pick: VideoStream | null = null;
-    if (this.isBufferSteady_ && this.useBola_) {
-      pick = this.pickFromBola_(streams);
-      // Anti-oscillation: when the buffer-derived pick wants to upgrade
-      // above what throughput sustains, cap at the throughput-safe pick
-      // (or stay at current if even that is a downgrade). Without this,
-      // a sustained low-bandwidth regime keeps flipping between
-      // throughput's safe pick and BOLA's full-buffer pick.
-      if (
-        pick &&
-        activeStream &&
-        throughputPick &&
-        pick.bandwidth > activeStream.bandwidth &&
-        pick.bandwidth > throughputPick.bandwidth
-      ) {
-        pick =
-          throughputPick.bandwidth > activeStream.bandwidth
-            ? throughputPick
-            : activeStream;
-      }
-    }
-    if (!pick) {
-      pick = throughputPick;
-    }
-    pick = this.applyLowBufferCap_(streams, pick);
-    if (!pick || pick === activeStream) {
-      return;
-    }
-
-    const now = performance.now();
-    const { switchInterval } = this.player_.getConfig().abr;
-    if (now - this.lastSwitchAt_ < switchInterval * 1000) {
-      return;
-    }
-
-    this.lastSwitchAt_ = now;
-    log.info("Decision", pick);
-    this.player_.emit(Events.ADAPTATION, { stream: pick });
-  }
-
-  private pickFromBola_(streams: VideoStream[]): VideoStream | null {
-    const lowest = streams[0];
-    const highest = streams[streams.length - 1];
-    if (!lowest || !highest) {
-      return null;
-    }
-    const frontBuffer = this.getFrontBuffer_();
-    const fbl = this.player_.getConfig().frontBufferLength;
-
-    const lnS1 = Math.log(lowest.bandwidth);
-    const vM = Math.log(highest.bandwidth) - lnS1 + 1;
-    const Qmax = Math.max(fbl, MINIMUM_BUFFER_S + 2 * streams.length);
-    const gp = (vM - 1) / (Qmax / MINIMUM_BUFFER_S - 1);
-    const V = MINIMUM_BUFFER_S / gp;
-
-    let bestIndex = 0;
-    let bestScore = -Infinity;
-    for (let i = 0; i < streams.length; i++) {
-      const stream = streams[i];
-      if (!stream) {
-        continue;
-      }
-      const vm = Math.log(stream.bandwidth) - lnS1 + 1;
-      // Paper score is (V * (v_m + gp) - Q) / S_m with lowest v_m = 0.
-      // Our vm is +1 shifted, so subtract 1 to recover the paper's v_m.
-      const score = (V * (vm - 1 + gp) - frontBuffer) / stream.bandwidth;
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = i;
-      }
-    }
-
-    return streams[bestIndex] ?? null;
-  }
-
-  private pickFromThroughput_(
-    streams: VideoStream[],
-    activeStream: VideoStream | null,
-  ): VideoStream | null {
     const { abr } = this.player_.getConfig();
     const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
 
-    let best: VideoStream | null = null;
+    // Throughput-driven pick — the floor. Asymmetric upgrade/downgrade
+    // thresholds give a single-signal decision the stability it needs.
+    let pick: VideoStream | null = null;
     for (const stream of streams) {
       let scaled = bw;
       if (activeStream) {
@@ -218,44 +130,41 @@ export class AbrController {
             : abr.bandwidthDowngradeTarget;
       }
       if (stream.bandwidth <= scaled) {
-        best = stream;
+        pick = stream;
       }
     }
-    return best ?? streams[0] ?? null;
-  }
+    pick = pick ?? streams[0] ?? null;
+    if (!pick) {
+      return;
+    }
 
-  // Underrun safety: cap `pick` at `safeThroughput * frontBuffer /
-  // fragmentDuration` so the next segment can land before the buffer
-  // empties. Suppressed pre-latch (no segments observed yet) — at that
-  // point frontBuffer is 0 and the cap would force the lowest stream
-  // even when the throughput estimate justifies a higher startup pick.
-  private applyLowBufferCap_(
-    streams: VideoStream[],
-    pick: VideoStream | null,
-  ): VideoStream | null {
-    if (!pick || !this.isBufferSteady_) {
-      return pick;
-    }
-    const lowest = streams[0];
-    if (!lowest) {
-      return pick;
-    }
-    const fragDur = lowest.hierarchy.track.maxSegmentDuration;
-    const frontBuffer = this.getFrontBuffer_();
-    const { abr } = this.player_.getConfig();
-    const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
-    const safeBitrate =
-      (bw * abr.lowBufferSafetyFactor * frontBuffer) / fragDur;
-
-    if (pick.bandwidth <= safeBitrate) {
-      return pick;
-    }
-    let safe: VideoStream | null = null;
-    for (const stream of streams) {
-      if (stream.bandwidth <= safeBitrate) {
-        safe = stream;
+    // Buffer-aware uplift — when the buffer is comfortable, the buffer
+    // itself corroborates the EWMA, so drop the upgrade margin and
+    // allow the highest stream the estimate sustains.
+    if (this.useBola_) {
+      const ceiling = bw * abr.bandwidthDowngradeTarget;
+      let raised: VideoStream | null = null;
+      for (const stream of streams) {
+        if (stream.bandwidth <= ceiling) {
+          raised = stream;
+        }
+      }
+      if (raised && raised.bandwidth > pick.bandwidth) {
+        pick = raised;
       }
     }
-    return safe ?? lowest;
+
+    if (pick === activeStream) {
+      return;
+    }
+
+    const now = performance.now();
+    if (now - this.lastSwitchAt_ < abr.switchInterval * 1000) {
+      return;
+    }
+
+    this.lastSwitchAt_ = now;
+    log.info("Decision", pick);
+    this.player_.emit(Events.ADAPTATION, { stream: pick });
   }
 }
