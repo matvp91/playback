@@ -211,6 +211,13 @@ export class StreamController {
     }
 
     for (const [type, streams] of this.streamsMap_) {
+      if (type === MediaType.SUBTITLE) {
+        // We can't do anything with SUBTITLE here, but we shall not
+        // include it in our streamsMap to begin with.
+        // TODO(matvp): We shall not include this in our streamsMap to
+        // begin with.
+        continue;
+      }
       const stream = this.resolveStream_(type, streams);
       this.streams_.set(type, stream);
       log.info("Initial", type, stream);
