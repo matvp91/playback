@@ -35,13 +35,7 @@ export class AbrController {
     this.player_.on(Events.BUFFER_APPENDED, this.onBufferAppended_);
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
-
-    this.timer_.tickEvery(1);
-  }
-
-  getThroughputEstimate(): number {
-    const { abr } = this.player_.getConfig();
-    return this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
+    this.player_.on(Events.STREAMS_CREATED, this.onStreamsCreated_);
   }
 
   destroy() {
@@ -50,11 +44,16 @@ export class AbrController {
     this.player_.off(Events.BUFFER_APPENDED, this.onBufferAppended_);
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
+    this.player_.off(Events.STREAMS_CREATED, this.onStreamsCreated_);
     if (this.media_) {
       this.media_.removeEventListener("seeking", this.onSeeking_);
       this.media_ = null;
     }
   }
+
+  private onStreamsCreated_ = () => {
+    this.timer_.tickNow().tickEvery(1);
+  };
 
   private onMediaAttached_ = (event: MediaAttachedEvent) => {
     this.media_ = event.media;
