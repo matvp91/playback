@@ -164,6 +164,6 @@ export class AbrController {
 
     this.lastSwitchAt_ = now;
     log.info("Decision", pick);
-    this.player_.emit(Events.ADAPTATION, { stream: pick });
+    this.player_.emit(Events.ABR_ADAPT, { stream: pick });
   }
 }

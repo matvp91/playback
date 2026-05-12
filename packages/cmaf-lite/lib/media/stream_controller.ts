@@ -1,5 +1,5 @@
 import type {
-  AdaptationEvent,
+  AbrAdaptEvent,
   BufferFlushedEvent,
   ManifestUpdatedEvent,
   MediaAttachedEvent,
@@ -46,7 +46,7 @@ export class StreamController {
     this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.on(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.on(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
-    this.player_.on(Events.ADAPTATION, this.onAdaptation_);
+    this.player_.on(Events.ABR_ADAPT, this.onAbrAdapt_);
   }
 
   getStreams<T extends MediaType>(type: T) {
@@ -75,7 +75,7 @@ export class StreamController {
     this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
     this.player_.off(Events.MEDIA_DETACHED, this.onMediaDetached_);
     this.player_.off(Events.BUFFER_FLUSHED, this.onBufferFlushed_);
-    this.player_.off(Events.ADAPTATION, this.onAdaptation_);
+    this.player_.off(Events.ABR_ADAPT, this.onAbrAdapt_);
     this.mediaStates_.clear();
   }
 
@@ -108,7 +108,7 @@ export class StreamController {
     }
   };
 
-  private onAdaptation_ = (event: AdaptationEvent) => {
+  private onAbrAdapt_ = (event: AbrAdaptEvent) => {
     this.switchStream_(event.stream);
   };
 

@@ -32,7 +32,7 @@ export const Events = {
   BUFFER_APPEND_ERROR: "bufferAppendError",
   STREAMS_CREATED: "streamsCreated",
   STREAM_CHANGED: "streamChanged",
-  ADAPTATION: "adaptation",
+  ABR_ADAPT: "abrAdapt",
   TIMELINE_UPDATED: "timelineUpdated",
   NETWORK_REQUEST: "networkRequest",
   NETWORK_RESPONSE: "networkResponse",
@@ -167,7 +167,7 @@ export interface StreamChangedEvent<T extends MediaType = MediaType> {
  *
  * @public
  */
-export interface AdaptationEvent {
+export interface AbrAdaptEvent {
   stream: VideoStream;
 }
 
@@ -213,7 +213,7 @@ export interface EventMap {
   [Events.BUFFER_FLUSHED]: (event: BufferFlushedEvent) => void;
   [Events.STREAMS_CREATED]: undefined;
   [Events.STREAM_CHANGED]: (event: StreamChangedEvent) => void;
-  [Events.ADAPTATION]: (event: AdaptationEvent) => void;
+  [Events.ABR_ADAPT]: (event: AbrAdaptEvent) => void;
   [Events.TIMELINE_UPDATED]: undefined;
   [Events.NETWORK_REQUEST]: (event: NetworkRequestEvent) => void;
   [Events.NETWORK_RESPONSE]: (event: NetworkResponseEvent) => void;
