@@ -1,222 +1,178 @@
-# ABR stability & recovery — design
+# ABR simplification — design
 
 ## Problem
 
-After a transient bandwidth throttle (e.g. Chrome devtools throttling
-on, then off), the player downgrades correctly but never returns to
-the original quality tier. The throughput estimate eventually climbs
-back within ~1 minute, yet the picked stream remains capped below the
-top tier.
+The ABR controller has accumulated several layers — throughput
+driver, BOLA scoring, anti-oscillation cap, low-buffer safety cap —
+each addressing a real concern but together making the decision
+flow harder to reason about. The recovery bug (post-throttle, the
+player doesn't return to the original tier) is symptomatic: it lives
+at the seam between two of those layers.
 
-Root cause: the BOLA-O anti-oscillation cap holds upgrades back even
-when the buffer signal is unambiguous. The cap currently compares
-BOLA's pick to the *throughput driver's pick*, which already folds in
-`bandwidthUpgradeTarget = 0.7` (a 43% headroom requirement). That
-margin is correct for the throughput driver acting as a *single* signal
-— but it is the wrong threshold to apply on top of BOLA, whose own
-full-buffer signal is the second corroboration. As a result, to allow
-BOLA to pick tier N the EWMA must reach 1/0.7 ≈ 1.43 × tier N. For any
-network whose actual capacity is below that bar, the cap is
-permanently binding and the player cannot return to tier N.
+## Goal
 
-`InsufficientBufferRule`-style underrun protection (`applyLowBufferCap_`)
-is mostly inert at full buffer (it only binds below ~5s of front buffer
-with default config) and is not the cause of the recovery failure. It
-stays as-is.
+A single ABR strategy that:
 
-## Goals
-
-- Recovery: after the EWMA has caught up to a recovered network,
-  BOLA's pick must be allowed to climb to whatever the network
-  literally supports — not held back by the throughput driver's
-  conservative upgrade margin.
-- Stream stability: oscillation prevention in genuinely
-  low-bandwidth regimes is preserved exactly as today.
-- No new configuration knobs, no new constants, no new state.
-- EWMA and BOLA remain pure: each operates on its own signal, and
-  buffer-aware decision-making lives entirely in
-  `AbrController.evaluate_`.
-
-## Non-goals
-
-- Modifying `ThroughputEstimator`. Its API and behaviour are
-  unchanged.
-- Modifying BOLA scoring (`pickFromBola_`). Unchanged.
-- Modifying driver selection (the `useBola_` / `isBufferSteady_`
-  hysteresis). Unchanged.
-- Generalising to multi-rule aggregation. Out of scope.
+- Uses throughput (EWMA) as the primary signal for switch decisions.
+- Lifts the pick when the buffer corroborates that the network has
+  headroom (a "BOLA-lite" use of buffer fullness).
+- Has zero standalone safety caps. The throughput driver's existing
+  asymmetric upgrade/downgrade margins are the entire stability
+  story; buffer health is the entire optimism story.
+- Fits in roughly 100 lines.
 
 ## Design
 
-A single change to `AbrController`: introduce a separate cap
-calculation for the BOLA-O guard, distinct from the throughput
-driver's own decision.
+Two ABR signals, combined in one function:
 
-### Recalibrate the BOLA-O cap
+1. **Throughput-driven pick (the floor).** Highest stream the EWMA
+   confirms — asymmetric thresholds (`bandwidthUpgradeTarget = 0.7`
+   for upgrades, `bandwidthDowngradeTarget = 0.95` for stay/downgrade)
+   give it the stability it needs as a single signal.
 
-The current cap (in `evaluate_()`) compares BOLA's pick to the
-*throughput driver's pick*:
+2. **Buffer-driven uplift.** When the front buffer has been
+   continuously above the upper hysteresis threshold (`(2/3) *
+   frontBufferLength` to enter, `(1/3) * frontBufferLength` to exit),
+   the buffer is corroborating evidence. The pick is allowed to
+   raise to the highest stream the EWMA confirms sustainable
+   (`EWMA × bandwidthDowngradeTarget`) — no upgrade margin needed
+   because the buffer signal is the second source of confirmation.
 
-```ts
-if (
-  pick &&
-  activeStream &&
-  throughputPick &&
-  pick.bandwidth > activeStream.bandwidth &&
-  pick.bandwidth > throughputPick.bandwidth
-) {
-  pick = throughputPick.bandwidth > activeStream.bandwidth
-    ? throughputPick
-    : activeStream;
-}
-```
-
-`throughputPick` itself folds in `bandwidthUpgradeTarget = 0.7`,
-which means BOLA is held below "highest stream that fits under
-0.7 × estimate." That margin is correct for the throughput driver
-acting as a single signal — it must be conservative without
-corroboration — but it is the wrong threshold to cap a
-buffer-corroborated rule like BOLA.
-
-The fix introduces a separate helper that resolves BOLA's ceiling
-to "the highest stream the EWMA confirms is *sustainable*", reusing
-`bandwidthDowngradeTarget` (the existing config key whose semantics
-are precisely *"the stream is sustainable at this estimate"*):
+The final `evaluate_` body:
 
 ```ts
-private throughputCap_(streams: VideoStream[]): VideoStream | null {
+private evaluate_() {
+  const streams = this.player_.getStreams(MediaType.VIDEO);
+  if (streams.length === 0) return;
+  const activeStream = this.player_.getActiveStream(MediaType.VIDEO);
   const { abr } = this.player_.getConfig();
   const bw =
     this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
-  const threshold = bw * abr.bandwidthDowngradeTarget;
-  let best: VideoStream | null = null;
-  for (const stream of streams) {
-    if (stream.bandwidth <= threshold) {
-      best = stream;
+
+  // Throughput-driven pick — asymmetric thresholds for stability.
+  let pick: VideoStream | null = null;
+  for (const s of streams) {
+    let scaled = bw;
+    if (activeStream) {
+      scaled *= s.bandwidth > activeStream.bandwidth
+        ? abr.bandwidthUpgradeTarget
+        : abr.bandwidthDowngradeTarget;
     }
+    if (s.bandwidth <= scaled) pick = s;
   }
-  return best ?? streams[0] ?? null;
+  pick = pick ?? streams[0]!;
+
+  // Buffer-aware uplift — when the buffer corroborates, drop the
+  // upgrade margin and allow the highest sustainable tier.
+  if (this.useBola_) {
+    const ceiling = bw * abr.bandwidthDowngradeTarget;
+    let raised: VideoStream | null = null;
+    for (const s of streams) if (s.bandwidth <= ceiling) raised = s;
+    if (raised && raised.bandwidth > pick.bandwidth) pick = raised;
+  }
+
+  if (pick === activeStream) return;
+  const now = performance.now();
+  if (now - this.lastSwitchAt_ < abr.switchInterval * 1000) return;
+  this.lastSwitchAt_ = now;
+  log.info("Decision", pick);
+  this.player_.emit(Events.ADAPTATION, { stream: pick });
 }
 ```
 
-The cap comparison in `evaluate_()` switches from `throughputPick`
-to `throughputCap`:
+## What stays
 
-```ts
-const throughputCap = this.throughputCap_(streams);
-if (
-  pick &&
-  activeStream &&
-  throughputCap &&
-  pick.bandwidth > activeStream.bandwidth &&
-  pick.bandwidth > throughputCap.bandwidth
-) {
-  pick = throughputCap.bandwidth > activeStream.bandwidth
-    ? throughputCap
-    : activeStream;
-}
-```
+- `ThroughputEstimator` (dual fast/slow EWMA) — unchanged.
+- `useBola_` hysteresis boolean — updated on `BUFFER_APPENDED`, reset
+  on `seeking`. Same thresholds as today (1/3 lower, 2/3 upper).
+- `lastSwitchAt_` and the `switchInterval` throttle.
+- The `NETWORK_RESPONSE`, `BUFFER_APPENDED`, `MEDIA_ATTACHED`,
+  `MEDIA_DETACHING`, and `seeking` event handlers (in pared-down
+  form).
+- `getThroughputEstimate()` public method.
 
-Two distinct questions, two distinct functions:
+## What gets removed
 
-- `pickFromThroughput_` — *the throughput driver's own decision*.
-  Conservative; uses `bandwidthUpgradeTarget` (0.7) /
-  `bandwidthDowngradeTarget` (0.95) to gate switches off a single
-  signal.
-- `throughputCap_` — *the BOLA-O ceiling*. Direct; the highest
-  stream the EWMA confirms sustainable (× 0.95). BOLA's buffer
-  signal is the second source of confirmation, so the upgrade
-  margin is unnecessary; the small `bandwidthDowngradeTarget` margin
-  remains as a hedge against EWMA noise at exact tier boundaries.
-
-Behavioural consequences:
-
-- Sustained low-bandwidth regime: the EWMA settles at the actual
-  network rate, `throughputCap` resolves to the highest sustainable
-  stream, BOLA's full-buffer pick gets capped to that. Oscillation
-  prevented exactly as today.
-- Post-throttle recovery: as the EWMA climbs back, `throughputCap`
-  climbs with it. Each evaluation tick is permitted to step BOLA's
-  pick to the next tier the EWMA now supports. After EWMA recovery
-  plus a few `switchInterval` cooldowns, the player reaches the
-  highest tier the network sustains with ≥ 5% margin.
-- Single transient delay: the cap floor is `activeStream` (the
-  formula picks `max(throughputCap, active)`), so a one-off bad
-  sample can never *cause* a downgrade — at worst it briefly
-  prevents an upgrade until the next sample lands.
-- Boundary stability: with the 5% margin from
-  `bandwidthDowngradeTarget`, EWMA noise around an exact tier
-  bitrate does not flap the cap between adjacent tiers.
-
-No new state, no new constants, no rising-edge tracking, no
-duration latch, no API changes outside `AbrController`.
+| Removed | Why it can go |
+|---|---|
+| `pickFromBola_` (~30 lines of log/V/gp math) | Replaced by a simple ceiling pick; behavior at full buffer is equivalent for typical adaptive ladders |
+| BOLA-O anti-oscillation cap (separate logic block) | Folded into `max(throughput-pick, ceiling)` — same effect, fewer branches |
+| `applyLowBufferCap_` (~30 lines) and its `isBufferSteady_` latch | Sub-5s safety net that fires in a narrow window; the throughput driver's `0.95` downgrade margin provides the practical equivalent |
+| `MINIMUM_BUFFER_S` constant | Was only used by `pickFromBola_` |
+| `lowBufferSafetyFactor` config key | Was only used by `applyLowBufferCap_` |
 
 ## Configuration
 
-No changes to `AbrConfig` or `PlayerConfig`. The cap formula reuses
-two existing values:
+`AbrConfig.lowBufferSafetyFactor` is removed (no callers remain
+after the cap is deleted). All other keys remain unchanged.
 
-- The EWMA estimate from `ThroughputEstimator.getEstimate()`.
-- `AbrConfig.bandwidthDowngradeTarget` (0.95) — already documented
-  as *"bandwidth fraction that triggers a downgrade below current
-  quality"*; semantically equivalent to *"streams whose bitrate
-  fits under this fraction of the estimate are sustainable at the
-  estimate"*.
+## Behaviour vs current
+
+- **Recovery (the reported bug):** fixed. The buffer-driven uplift
+  reaches the top tier when `EWMA ≥ tier / 0.95 ≈ 1.05 × tier`,
+  versus the current `1.43 × tier` requirement.
+- **Sustained low bandwidth:** stable. The ceiling is the highest
+  stream the EWMA literally supports (× 0.95), so the pick never
+  exceeds what the network can sustain. No oscillation.
+- **Single transient bad sample:** does not cause a downgrade. The
+  uplift's floor is the throughput-pick, which uses the existing
+  `0.95` "stay" margin; a single noisy sample below the active
+  stream's bitrate / 0.95 leaves the active pick unchanged.
+- **Buffer-aware quality progression:** binary instead of graded.
+  Below `2/3 frontBufferLength`, throughput drives; above, the
+  buffer uplift kicks in. For dense ladders (many close-spaced
+  tiers) this is a slight regression vs BOLA's continuous score;
+  for the typical 3–6 tier CMAF ladder it is indistinguishable.
+- **Sub-5s buffer scenarios with stale-high EWMA:** lose the
+  explicit `applyLowBufferCap_` safety net. The throughput driver
+  still downgrades as new samples land; the previously-explicit
+  margin is now part of the throughput driver's natural reaction
+  curve.
 
 ## Testing
 
-### New tests in `BOLA-O cap recalibrated` describe
+`test/abr/abr_controller.test.ts` shrinks to match the new surface:
 
-- Sustained low-bw: streams = [500k, 1.5M, 3M, 5M], EWMA settled
-  at 1M, BOLA wants top → cap resolves to streams ≤ 0.95 × 1M =
-  0.95M = 500k. BOLA's pick is capped to 500k (or
-  `max(500k, active)`).
-- Post-throttle recovery: drive successive samples that push EWMA
-  from 1M up through 6M; assert BOLA's pick climbs through the
-  tiers as `throughputCap` admits each.
-- Boundary stability: EWMA exactly at a tier bitrate × (1 / 0.95).
-  e.g. 5M / 0.95 ≈ 5.26M → top tier (5M) is admitted. With EWMA at
-  5.0M (no margin), cap holds at 3M; sub-5M EWMA noise does not
-  flap into 5M.
+**Keep, with adjustments to match the simplified evaluate_:**
 
-### Existing `BOLA anti-oscillation guard` tests
+- Construction / destruction tests.
+- `ADAPTATION` emission on tick.
+- `NETWORK_RESPONSE` forwarding to estimator.
+- `MEDIA_ATTACHED` / `seeking` handler attachment.
+- `switchInterval` throttle behaviour.
+- `useBola_` hysteresis: enters at `2/3 * fbl`, exits at
+  `1/3 * fbl`, dead zone holds previous state, resets on
+  `seeking`.
 
-- *caps a BOLA upgrade to the active stream when throughput cannot
-  sustain any upgrade*: EWMA = 600k, active = streams[0] = 500k.
-  Under the new cap: threshold = 600k × 0.95 = 570k → only 500k
-  fits, `throughputCap` = 500k. BOLA wants top, cap fires,
-  `pick = max(500k, 500k) = 500k = active`, no emit.
-  **Outcome unchanged.**
-- *caps a BOLA upgrade to the throughput-safe stream when
-  throughput permits a partial upgrade*: EWMA = 2.4M, active =
-  500k. Under the new cap: threshold = 2.4M × 0.95 = 2.28M →
-  streams ≤ 2.28M = 1.5M, `throughputCap` = 1.5M. BOLA wants top,
-  cap fires, `pick = throughputCap (1.5M) > active (500k)
-  → 1.5M`. **Outcome unchanged** (still emits streams[1]).
+**Delete:**
 
-Both tests' comments need updating to describe the new derivation
-(× 0.95 from `bandwidthDowngradeTarget`, no `bandwidthUpgradeTarget`
-involvement). The numerical assertions stay the same in both cases
-because the chosen test values happen to land on the same tier
-under the new cap.
+- The `isBufferSteady_ latch` describe (latch is gone).
+- The `BOLA math (via inlined pickBolaStream_)` describe (no
+  more BOLA math).
+- The `low-buffer safety cap` describe (cap is gone).
 
-### `low-buffer safety cap (InsufficientBufferRule)` tests
+**Replace:**
 
-Unaffected. The `applyLowBufferCap_` helper is independent of this
-change.
+- The `BOLA anti-oscillation guard` describe is reworked to test
+  the new "buffer-aware uplift" path:
+  - With `useBola_ = true` and EWMA = 2.4M, active = 500k: the
+    uplift raises the pick from throughput's stay (500k) to the
+    highest stream under 2.28M = 1.5M. (Same numerical outcome
+    as today.)
+  - With `useBola_ = true` and EWMA = 600k, active = 500k: the
+    uplift's ceiling = 570k → only 500k fits → pick stays at
+    active = 500k, no emit. (Same outcome as today.)
+  - With `useBola_ = false`, the uplift is suppressed; throughput
+    drives alone.
 
-## Out of scope (deferred or rejected)
+## Out of scope
 
-- **Buffer-headroom-weighted EWMA samples.** Considered as a
-  separate stability mechanism (dampening downward samples when
-  buffer is healthy). Rejected because (a) it would require
-  threading buffer state into the estimator's API, breaking the
-  EWMA / BOLA / decision-layer separation, and (b) the cap floor
-  (`max(throughputCap, active)`) already prevents single-sample
-  blips from causing downgrades, so the dampening is unnecessary
-  to fix the reported scenarios.
-- **Switch confirmation window.** Not needed once the cap is
-  calibrated correctly; `switchInterval` already provides per-switch
-  cooldown.
-- **Buffer-trajectory gate on downgrades.** Defer; revisit only if
-  measurements after this change show residual flap.
+- **`bandwidthUpgradeTarget` tuning.** Stays at `0.7` because the
+  throughput driver uses it as a single-signal upgrade margin where
+  conservatism is correct. The buffer-aware uplift does not consult
+  it.
+- **Sample-credibility weighting on the EWMA.** Considered earlier
+  and dropped — the cap floor (`max(throughput-pick, ceiling)`)
+  already prevents single-sample blips from causing downgrades.
+- **Abandon-fragment** and other open enhancements remain deferred
+  per `packages/cmaf-lite/docs/abr.md`.
