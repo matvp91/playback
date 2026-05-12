@@ -1,261 +1,170 @@
-import type { NetworkResponseEvent } from "../events";
+import type {
+  BufferAppendedEvent,
+  MediaAttachedEvent,
+  NetworkResponseEvent,
+} from "../events";
 import { Events } from "../events";
 import type { Player } from "../player";
-import type { Stream, VideoStream } from "../types/media";
+import type { VideoStream } from "../types/media";
 import { MediaType } from "../types/media";
 import { NetworkRequestType } from "../types/net";
 import { getBufferedEnd } from "../utils/buffer_utils";
 import { Log } from "../utils/log";
 import { Timer } from "../utils/timer";
-import { EwmaBandwidthEstimator } from "./ewma_bandwidth_estimator";
+import { ThroughputEstimator } from "./throughput_estimator";
 
 const log = Log.create("AbrController");
 
 export class AbrController {
   private player_: Player;
   private timer_: Timer;
-  private bandwidthEstimator_: EwmaBandwidthEstimator;
-  private streams_: VideoStream[] = [];
+  private throughput_: ThroughputEstimator;
+  private media_: HTMLMediaElement | null = null;
+  private useBola_ = false;
+  private lastSwitchAt_ = -Infinity;
 
   constructor(player: Player) {
     this.player_ = player;
+
+    const { abr } = player.getConfig();
+    this.throughput_ = new ThroughputEstimator(abr);
+
     this.timer_ = new Timer(() => this.evaluate_());
 
-    const abrConfig = player.getConfig().abr;
-    this.bandwidthEstimator_ = new EwmaBandwidthEstimator(abrConfig);
-
-    this.player_.on(Events.STREAMS_CREATED, this.onStreamsCreated_);
     this.player_.on(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
+    this.player_.on(Events.BUFFER_APPENDED, this.onBufferAppended_);
+    this.player_.on(Events.MEDIA_ATTACHED, this.onMediaAttached_);
+    this.player_.on(Events.MEDIA_DETACHING, this.onMediaDetaching_);
+
+    this.timer_.tickEvery(1);
   }
 
   getThroughputEstimate(): number {
-    const { defaultBandwidthEstimate } = this.player_.getConfig().abr;
-    return this.bandwidthEstimator_.getEstimate(defaultBandwidthEstimate);
+    const { abr } = this.player_.getConfig();
+    return this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
   }
 
-  getBufferLevel(): number {
-    const media = this.player_.getMedia();
+  destroy() {
+    this.timer_.stop();
+    this.player_.off(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
+    this.player_.off(Events.BUFFER_APPENDED, this.onBufferAppended_);
+    this.player_.off(Events.MEDIA_ATTACHED, this.onMediaAttached_);
+    this.player_.off(Events.MEDIA_DETACHING, this.onMediaDetaching_);
+    if (this.media_) {
+      this.media_.removeEventListener("seeking", this.onSeeking_);
+      this.media_ = null;
+    }
+  }
+
+  private onMediaAttached_ = (event: MediaAttachedEvent) => {
+    this.media_ = event.media;
+    this.media_.addEventListener("seeking", this.onSeeking_);
+  };
+
+  private onMediaDetaching_ = () => {
+    if (this.media_) {
+      this.media_.removeEventListener("seeking", this.onSeeking_);
+      this.media_ = null;
+    }
+  };
+
+  private onSeeking_ = () => {
+    this.useBola_ = false;
+  };
+
+  private onNetworkResponse_ = (event: NetworkResponseEvent) => {
+    if (event.type === NetworkRequestType.SEGMENT) {
+      const { response } = event;
+      this.throughput_.sample(
+        response.durationSec,
+        response.arrayBuffer.byteLength,
+      );
+    }
+  };
+
+  private onBufferAppended_ = (event: BufferAppendedEvent) => {
+    if (event.type !== MediaType.VIDEO) {
+      return;
+    }
+    const frontBuffer = this.getFrontBuffer_();
+    const fbl = this.player_.getConfig().frontBufferLength;
+    if (frontBuffer >= (2 / 3) * fbl) {
+      this.useBola_ = true;
+    } else if (frontBuffer < (1 / 3) * fbl) {
+      this.useBola_ = false;
+    }
+  };
+
+  private getFrontBuffer_(): number {
+    const media = this.media_;
     if (!media) {
       return 0;
     }
     const buffered = this.player_.getBuffered(MediaType.VIDEO);
     const { maxBufferHole } = this.player_.getConfig();
     const end = getBufferedEnd(buffered, media.currentTime, maxBufferHole);
-    return end ? end - media.currentTime : 0;
-  }
-
-  destroy() {
-    this.timer_.stop();
-    this.player_.off(Events.STREAMS_CREATED, this.onStreamsCreated_);
-    this.player_.off(Events.NETWORK_RESPONSE, this.onNetworkResponse_);
-  }
-
-  private onStreamsCreated_ = () => {
-    // TODO(matvp): Pass streamsMap as event & introduce StreamsCreatedEvent.
-    this.streams_ = this.player_.getStreams(MediaType.VIDEO);
-
-    // Run a first evalulation to contribute to the initial stream selection.
-    this.evaluate_();
-
-    const { evaluationInterval } = this.player_.getConfig().abr;
-    this.timer_.tickEvery(evaluationInterval);
-  };
-
-  private onNetworkResponse_ = (event: NetworkResponseEvent) => {
-    if (event.type !== NetworkRequestType.SEGMENT) {
-      return;
+    if (end === null) {
+      return 0;
     }
-    const { durationSec, arrayBuffer } = event.response;
-    this.bandwidthEstimator_.sample(durationSec, arrayBuffer.byteLength);
-  };
+    return end - media.currentTime;
+  }
 
   private evaluate_() {
-    const streams = this.streams_;
+    const streams = this.player_.getStreams(MediaType.VIDEO);
+    if (streams.length === 0) {
+      return;
+    }
     const activeStream = this.player_.getActiveStream(MediaType.VIDEO);
+    const { abr } = this.player_.getConfig();
+    const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
 
-    const candidates = [
-      this.evaluateThroughput_(streams, activeStream),
-      this.evaluateBola_(streams, activeStream),
-      this.evaluateInsufficientBuffer_(streams, activeStream),
-      this.evaluateDroppedFrames_(streams, activeStream),
-    ];
-
-    let best: VideoStream | null = null;
-    for (const candidate of candidates) {
-      if (candidate && (!best || candidate.bandwidth < best.bandwidth)) {
-        best = candidate;
-      }
-    }
-
-    if (best && best !== activeStream) {
-      log.info("Decision", best);
-      this.player_.emit(Events.ADAPTATION, {
-        stream: best,
-      });
-    }
-  }
-
-  /**
-   * Highest video stream fitting measured throughput, minus audio.
-   */
-  private evaluateThroughput_(
-    streams: VideoStream[],
-    activeStream: VideoStream | null,
-  ): VideoStream | null {
-    const { bandwidthUpgradeTarget, bandwidthDowngradeTarget } =
-      this.player_.getConfig().abr;
-
-    let bandwidth = this.getThroughputEstimate();
-    const audioStream = this.player_.getActiveStream(MediaType.AUDIO);
-    if (audioStream) {
-      bandwidth -= audioStream.bandwidth;
-    }
-
-    let best: Stream | null = null;
+    // Throughput-driven pick — the floor. Asymmetric upgrade/downgrade
+    // thresholds give a single-signal decision the stability it needs.
+    let pick: VideoStream | null = null;
     for (const stream of streams) {
-      let scaledBandwidth = bandwidth;
+      let scaled = bw;
       if (activeStream) {
-        // If we have a current stream active, figure out if we're up or down
-        // scaling and apply the scaling factor.
-        const isUpgrade = stream.bandwidth > activeStream.bandwidth;
-        const factor = isUpgrade
-          ? bandwidthUpgradeTarget
-          : bandwidthDowngradeTarget;
-        scaledBandwidth *= factor;
+        scaled *=
+          stream.bandwidth > activeStream.bandwidth
+            ? abr.bandwidthUpgradeTarget
+            : abr.bandwidthDowngradeTarget;
       }
-      if (stream.bandwidth <= scaledBandwidth) {
-        best = stream;
+      if (stream.bandwidth <= scaled) {
+        pick = stream;
       }
     }
-
-    return best ?? streams[0] ?? null;
-  }
-
-  /**
-   * BOLA — buffer-level utility scoring. Abstains during startup.
-   * See BOLA paper (arxiv 1601.06748). Utility v_m = ln(S_m / S_1)
-   * shifted by +1 so lowest stream has utility 1.
-   */
-  private evaluateBola_(
-    streams: VideoStream[],
-    activeStream: VideoStream | null,
-  ): VideoStream | null {
-    if (!activeStream) {
-      return null;
+    pick = pick ?? streams[0] ?? null;
+    if (!pick) {
+      return;
     }
 
-    const MINIMUM_BUFFER_S = 10;
-
-    const lowestStream = streams[0];
-    const highestStream = streams[streams.length - 1];
-    if (!lowestStream || !highestStream) {
-      return null;
-    }
-
-    const activeTrack = activeStream.hierarchy.track;
-    const { frontBufferLength } = this.player_.getConfig();
-    const bufferLevel = this.getBufferLevel();
-
-    if (bufferLevel < activeTrack.maxSegmentDuration) {
-      return null;
-    }
-
-    const lnS1 = Math.log(lowestStream.bandwidth);
-    const vM = Math.log(highestStream.bandwidth) - lnS1 + 1;
-
-    // Q_max: at least front buffer, scaled up by stream count.
-    const Qmax = Math.max(
-      frontBufferLength,
-      MINIMUM_BUFFER_S + 2 * streams.length,
-    );
-
-    const gp = (vM - 1) / (Qmax / MINIMUM_BUFFER_S - 1);
-    const V = MINIMUM_BUFFER_S / gp;
-
-    let bestIndex = 0;
-    let bestScore = -Infinity;
-    for (let i = 0; i < streams.length; i++) {
-      const stream = streams[i];
-      if (!stream) {
-        continue;
+    // Buffer-aware uplift — when the buffer is comfortable, the buffer
+    // itself corroborates the EWMA, so drop the upgrade margin and
+    // allow the highest stream the estimate sustains.
+    if (this.useBola_) {
+      const ceiling = bw * abr.bandwidthDowngradeTarget;
+      let raised: VideoStream | null = null;
+      for (const stream of streams) {
+        if (stream.bandwidth <= ceiling) {
+          raised = stream;
+        }
       }
-      const vm = Math.log(stream.bandwidth) - lnS1 + 1;
-      // Paper: (V * (v_m + gp) - Q) / S_m with lowest v_m = 0.
-      // Our vm is +1 shifted, so subtract 1 to recover paper's v_m.
-      const score = (V * (vm - 1 + gp) - bufferLevel) / stream.bandwidth;
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = i;
+      if (raised && raised.bandwidth > pick.bandwidth) {
+        pick = raised;
       }
     }
 
-    return streams[bestIndex] ?? null;
-  }
-
-  /**
-   * Proportional downshift based on buffer thinness. Formula:
-   * `throughput * safety * (bufferLevel / maxSegmentDuration)`.
-   * Abstains during startup.
-   */
-  private evaluateInsufficientBuffer_(
-    streams: VideoStream[],
-    activeStream: VideoStream | null,
-  ): VideoStream | null {
-    if (!activeStream) {
-      return null;
+    if (pick === activeStream) {
+      return;
     }
 
-    const THROUGHPUT_SAFETY_FACTOR = 0.7;
-
-    const activeTrack = activeStream.hierarchy.track;
-    const bufferLevel = this.getBufferLevel();
-
-    if (bufferLevel < activeTrack.maxSegmentDuration) {
-      return null;
+    const now = performance.now();
+    if (now - this.lastSwitchAt_ < abr.switchInterval * 1000) {
+      return;
     }
 
-    const targetBitrate =
-      this.getThroughputEstimate() *
-      THROUGHPUT_SAFETY_FACTOR *
-      (bufferLevel / activeTrack.maxSegmentDuration);
-
-    let best: Stream | null = null;
-    for (const stream of streams) {
-      if (stream.bandwidth <= targetBitrate) {
-        best = stream;
-      }
-    }
-
-    return best ?? streams[0] ?? null;
-  }
-
-  /**
-   * Step one quality level down when dropped frame ratio is high.
-   */
-  private evaluateDroppedFrames_(
-    streams: VideoStream[],
-    currentStream: VideoStream | null,
-  ): VideoStream | null {
-    if (!currentStream) {
-      return null;
-    }
-
-    const media = this.player_.getMedia() as HTMLVideoElement | null;
-    if (!media?.getVideoPlaybackQuality) {
-      return null;
-    }
-
-    const quality = media.getVideoPlaybackQuality();
-    const ratio = quality.totalVideoFrames
-      ? quality.droppedVideoFrames / quality.totalVideoFrames
-      : 0;
-    const { droppedFramesThreshold } = this.player_.getConfig().abr;
-    if (ratio <= droppedFramesThreshold) {
-      return null;
-    }
-
-    const currentIndex = streams.indexOf(currentStream);
-    const newIndex = Math.max(0, currentIndex - 1);
-    return streams[newIndex] ?? null;
+    this.lastSwitchAt_ = now;
+    log.info("Decision", pick);
+    this.player_.emit(Events.ADAPTATION, { stream: pick });
   }
 }

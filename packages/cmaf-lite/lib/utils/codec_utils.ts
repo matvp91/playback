@@ -28,8 +28,7 @@ export function getCodecProfile(codec: string): string | null {
 
 /**
  * Normalize a full RFC 6381 codec string to a
- * canonical codec family name. Modeled after Shaka
- * Player's MimeUtils.getNormalizedCodec.
+ * canonical codec family name.
  */
 export function getNormalizedCodec(codec: string): string {
   const base = getCodecBase(codec).toLowerCase();
