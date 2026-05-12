@@ -21,18 +21,19 @@ describe("ObjectUtils", () => {
       expect(result).toEqual({ items: [4, 5] });
     });
 
-    it("returns a new object without mutating the target", () => {
+    it("mutates the target in place and returns the same reference", () => {
       const target = { a: 1, nested: { b: 2 } };
       const result = deepMerge(target, { a: 10 });
-      expect(result).not.toBe(target);
-      expect(target.a).toBe(1);
+      expect(result).toBe(target);
+      expect(target.a).toBe(10);
     });
 
-    it("does not mutate nested objects in the target", () => {
+    it("mutates nested objects in the target in place", () => {
       const nested = { b: 2, c: 3 };
       const target = { nested };
       deepMerge(target, { nested: { b: 20 } });
-      expect(nested.b).toBe(2);
+      expect(target.nested).toBe(nested);
+      expect(nested.b).toBe(20);
     });
 
     it("replaces a nested object with null", () => {

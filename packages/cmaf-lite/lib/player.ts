@@ -76,7 +76,7 @@ export class Player extends EventEmitter<EventMap> {
     pathOrConfig: string | DeepPartial<PlayerConfig>,
     value?: unknown,
   ): void {
-    this.config_ = ObjectUtils.deepMerge(
+    ObjectUtils.deepMerge(
       this.config_,
       typeof pathOrConfig === "string"
         ? ObjectUtils.unflattenPath(pathOrConfig, value)

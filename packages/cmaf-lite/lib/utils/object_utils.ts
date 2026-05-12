@@ -8,22 +8,22 @@ export function deepMerge<T extends object>(target: T, source: unknown): T {
     return target;
   }
   const src = source as Record<string, unknown>;
-  const result = { ...target } as unknown as Record<string, unknown>;
+  const tgt = target as unknown as Record<string, unknown>;
   for (const key in src) {
     const val = src[key];
     if (
       val !== null &&
       typeof val === "object" &&
       !Array.isArray(val) &&
-      typeof result[key] === "object" &&
-      result[key] !== null
+      typeof tgt[key] === "object" &&
+      tgt[key] !== null
     ) {
-      result[key] = deepMerge(result[key] as object, val);
+      deepMerge(tgt[key] as object, val);
     } else {
-      result[key] = val;
+      tgt[key] = val;
     }
   }
-  return result as T;
+  return target;
 }
 
 export function unflattenPath(path: string, value: unknown) {
