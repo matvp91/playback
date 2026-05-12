@@ -22,6 +22,7 @@ export class AbrController {
   private media_: HTMLMediaElement | null = null;
   private useBola_ = false;
   private lastSwitchAt_ = -Infinity;
+  private candidateStream_: VideoStream | null = null;
 
   constructor(player: Player) {
     this.player_ = player;
@@ -153,16 +154,28 @@ export class AbrController {
       }
     }
 
-    if (pick === activeStream) {
+    this.candidateStream_ = pick;
+    this.trySwitch_();
+  }
+
+  private trySwitch_() {
+    if (!this.candidateStream_) {
       return;
     }
 
+    const { abr } = this.player_.getConfig();
     const now = performance.now();
     if (now - this.lastSwitchAt_ < abr.switchInterval * 1000) {
       return;
     }
 
+    const activeStream = this.player_.getActiveStream(MediaType.VIDEO);
+    if (activeStream === this.candidateStream_) {
+      return;
+    }
+
     this.lastSwitchAt_ = now;
+    const pick = this.candidateStream_;
     log.info("Decision", pick);
     this.player_.emit(Events.ABR_ADAPT, { stream: pick });
   }
