@@ -2,12 +2,12 @@
 
 ## Problem
 
-cmaf-lite currently emits streams from the DASH parser straight into
-the buffer and stream controllers without verifying the device can
-decode them. An unplayable codec only surfaces when the buffer
-controller calls `addSourceBuffer()` with the resulting content
-type — late, opaque, and fatal even when other representations in
-the manifest are perfectly playable.
+cmaf-lite currently builds the playable `Stream[]` view of a manifest
+without verifying the device can decode each representation. An
+unplayable codec only surfaces when the buffer controller calls
+`addSourceBuffer()` with the resulting content type — late, opaque,
+and fatal even when other representations in the manifest are
+perfectly playable.
 
 There is also no machinery in place to support future capability-
 aware decisions (ABR smoothness bias, power-efficient bias,
@@ -17,8 +17,9 @@ attached to the stream model.
 ## Goal
 
 Probe every video and audio `Stream` against
-`navigator.mediaCapabilities.decodingInfo()` once after parse, drop
-representations the device can't decode, and attach the full
+`navigator.mediaCapabilities.decodingInfo()` at the moment it's
+projected from the manifest, drop representations the device can't
+decode from the playable view, and attach the full
 `MediaCapabilitiesDecodingInfo` result to the surviving streams so
 future features (ABR, DRM, HDR) can read it without re-probing.
 
@@ -33,36 +34,25 @@ future features (ABR, DRM, HDR) can read it without re-probing.
   caller asks for it yet.
 - Subtitle capability checks — `decodingInfo` doesn't cover
   `wvtt`/`stpp`, and the parser already filters unknown codecs.
+- Mutating the manifest. The manifest stays a faithful description
+  of what was authored; capability filtering only affects the
+  derived `Stream[]` view.
 
 ## Design
 
 ### Where it runs
 
-A new step in the manifest pipeline, invoked by
-`ManifestController.fetch_()` immediately after
-`DashParser.create()` / `DashParser.update()` and before the
-`MANIFEST_UPDATED` event is emitted. Implemented as
-`lib/manifest/capability_probe.ts` exporting a single async function:
+Inside `buildStreams` in `lib/utils/stream_utils.ts`. `buildStreams`
+is the only place a `Stream` is born from the manifest, so probing
+there means every video/audio `Stream` carries decoding info by
+construction. `buildStreams` becomes `async`.
 
-```ts
-async function probe(manifest: Manifest): Promise<void>
-```
+`StreamController.onManifestUpdated_` (the sole caller) awaits the
+result. This adds one `await` between `MANIFEST_UPDATED` and the
+controller acting on the new manifest — negligible for VOD; for
+live, well inside the manifest refresh interval.
 
-The function mutates the manifest in place:
-
-1. Collects every `VideoStream` and `AudioStream` reachable from
-   the manifest.
-2. Builds a `MediaDecodingConfiguration` per stream (see below).
-3. Runs `Promise.all` over `decodingInfo()` calls.
-4. Attaches the result via the new symbol on supported streams.
-5. Cascade-removes unsupported streams, then empty switching sets,
-   then empty tracks (see "Filtering").
-6. Throws if a video or audio track is left empty after cascade —
-   the manifest is unplayable.
-
-Probe runs on both initial parse and live updates. Results are not
-cached across updates: live updates can add representations, and
-the cost of a few extra `decodingInfo` calls is negligible.
+`ManifestController` is unchanged.
 
 ### The symbol
 
@@ -98,8 +88,67 @@ the whole object — `keySystemAccess` will be `undefined` until DRM
 probing is added, but the storage shape doesn't need to change.
 
 The symbol is **not** exported from the package entry. It's an
-internal back-channel for controllers (ABR in particular). Apps
-that need capability info later get a dedicated getter on `Player`.
+internal back-channel for controllers (ABR in particular).
+
+### `buildStreams` flow
+
+```
+async function buildStreams(manifest):
+  candidates = []           # { ss, track, type } tuples
+  subtitleStreams = []      # passed through untouched
+
+  for ss in manifest.switchingSets:
+    for track in ss.tracks:
+      if track.type == SUBTITLE:
+        subtitleStreams.push(projectSubtitle(ss, track))
+      else:
+        candidates.push({ ss, track })
+
+  decodingInfos = await Promise.all(
+    candidates.map(c => probe(c.ss, c.track))
+  )
+
+  result = { VIDEO: [], AUDIO: [], SUBTITLE: subtitleStreams }
+  for (candidate, info) in zip(candidates, decodingInfos):
+    if !info.supported: continue
+    stream = projectStream(candidate.ss, candidate.track)
+    stream[PROP_DECODING_INFO] = info
+    result[stream.type].push(stream)
+
+  sort each list by bandwidth ascending
+  return result
+```
+
+If, after filtering, `result[VIDEO]` or `result[AUDIO]` is empty
+**and** the corresponding media type existed in the manifest, throw
+a `ManifestUnsupportedError` (new typed error in
+`lib/utils/errors.ts` or wherever the existing typed errors live —
+to be confirmed during impl). `StreamController` surfaces it via
+the existing error path.
+
+If the manifest legitimately has no video (audio-only) or no audio
+streams, that's not an error — only an empty *after filtering*
+non-empty input is.
+
+### Probe cache
+
+A module-level `Map<string, Promise<MediaCapabilitiesDecodingInfo>>`
+in `stream_utils.ts`, keyed by a stable string derived from the
+probe inputs:
+
+```
+key = `${type}|${codec}|${width}x${height}|${bandwidth}`   # video
+key = `${type}|${codec}|${bandwidth}`                       # audio
+```
+
+Caching the `Promise` (not the resolved value) deduplicates
+concurrent probes for the same key. The cache lives for the
+lifetime of the module — live manifest updates that re-add the same
+representation get a cache hit. Memory cost is bounded by the
+number of distinct (codec, resolution, bitrate) tuples a player
+ever sees, which is small.
+
+No invalidation. Device capabilities don't change within a session.
 
 ### Building the configuration
 
@@ -110,10 +159,10 @@ Per stream:
 {
   type: "media-source",
   video: {
-    contentType: `video/mp4; codecs="${stream.codec}"`,
-    width: stream.width,
-    height: stream.height,
-    bitrate: stream.bandwidth,
+    contentType: `video/mp4; codecs="${codec}"`,
+    width: track.width,
+    height: track.height,
+    bitrate: track.bandwidth,
     framerate: 30, // see below
   },
 }
@@ -122,13 +171,18 @@ Per stream:
 {
   type: "media-source",
   audio: {
-    contentType: `audio/mp4; codecs="${stream.codec}"`,
-    bitrate: stream.bandwidth,
+    contentType: `audio/mp4; codecs="${codec}"`,
+    bitrate: track.bandwidth,
     channels: "2",      // see below
     samplerate: 48000,  // see below
   },
 }
 ```
+
+`codec` is the normalized codec from
+`CodecUtils.getNormalizedCodec(ss.codec)` — same as `projectStream`
+uses. `getContentType()` already produces the
+`video/mp4; codecs="..."` form.
 
 Framerate, channels, and samplerate are required by the spec but
 the parser doesn't extract them today. Use sane defaults
@@ -137,61 +191,37 @@ determination, which is all this iteration consumes. Surfacing
 real values is tracked as follow-up when ABR starts reading
 `smooth`.
 
-`getContentType()` in `codec_utils.ts` already produces the
-`video/mp4; codecs="..."` form — reuse it.
-
-### Filtering cascade
-
-After all probes resolve, walk the manifest:
-
-```
-for each period:
-  for each track:
-    for each switchingSet:
-      switchingSet.streams = streams where supported === true
-    track.switchingSets = sets with non-empty streams
-  drop track if it has zero switching sets
-fatal if any video or audio MediaType has zero tracks
-```
-
-The cascade is order-independent because each level filters its
-direct children only. Subtitle tracks pass through unmodified.
-
-The "fatal if empty" check throws a typed error
-(`ManifestUnsupportedError` or similar — name TBD during impl, but
-distinct from network errors). `ManifestController` surfaces it as
-an error event the same way it would a fetch failure.
-
-### Logging
-
-One `log.info` at the end of probing summarising what was kept and
-what was dropped, plus one `log.warn` per dropped stream with its
-codec/resolution. Matches existing manifest-pipeline logging.
-
 ### Browsers without `mediaCapabilities`
 
-Old browsers that lack `navigator.mediaCapabilities` — the probe
-falls back to `MediaSource.isTypeSupported(getContentType(...))`
-per stream and synthesises a minimal
-`MediaCapabilitiesDecodingInfo` (`{ supported, smooth: false,
-powerEfficient: false }`). Encoded once in
-`capability_probe.ts`; consumers don't need to know.
+The probe falls back to
+`MediaSource.isTypeSupported(getContentType(...))` per stream and
+synthesises a minimal `MediaCapabilitiesDecodingInfo`
+(`{ supported, smooth: false, powerEfficient: false }`). Encoded
+once inside the probe function; consumers don't need to know.
 
 ## Testing
 
-New test file `test/manifest/capability_probe.test.ts`:
+Extend `test/utils/stream_utils.test.ts`:
 
-- Probe stubs `navigator.mediaCapabilities.decodingInfo` per case.
-- Builds manifests via `test/__framework__/factories.ts`.
+- Stub `navigator.mediaCapabilities.decodingInfo` per case (and
+  `MediaSource.isTypeSupported` for the fallback case).
+- Build manifests via `test/__framework__/factories.ts`.
 - Cases:
-  - All streams supported → manifest unchanged except for symbol.
+  - All streams supported → all streams kept, each carries
+    `PROP_DECODING_INFO`.
   - Mixed support within a switching set → unsupported streams
-    dropped, set kept.
-  - Entire switching set unsupported → set dropped, track kept.
-  - All sets in a track unsupported → track dropped.
-  - All video tracks unsupported → throws.
-  - Subtitle streams pass through untouched (no symbol, no probe).
-  - Live update re-probes new representations.
+    excluded from the flat list, supported ones kept.
+  - Entire switching set unsupported → its streams absent; flat
+    list still non-empty from other sets.
+  - All video tracks unsupported → throws
+    `ManifestUnsupportedError`.
+  - All audio tracks unsupported → throws.
+  - Audio-only manifest with all audio supported and zero video
+    streams → does not throw (no video to begin with).
+  - Subtitle streams pass through untouched (no symbol, no probe
+    call recorded).
+  - Probe cache: same (codec, resolution, bitrate) across two
+    `buildStreams` calls → `decodingInfo` invoked once.
   - Fallback path (no `mediaCapabilities`) produces synthesised
     result with `smooth: false`, `powerEfficient: false`.
 
@@ -200,22 +230,29 @@ New test file `test/manifest/capability_probe.test.ts`:
 - `lib/constants.ts` — add `PROP_DECODING_INFO`.
 - `lib/types/media.ts` — add the symbol to `VideoStream` and
   `AudioStream` interfaces.
-- `lib/manifest/capability_probe.ts` — new.
-- `lib/manifest/manifest_controller.ts` — invoke probe between
-  parse and `MANIFEST_UPDATED` emission.
-- `test/manifest/capability_probe.test.ts` — new.
-- `test/__framework__/factories.ts` — extend factories so test
-  streams can be created already carrying a synthesised
-  `PROP_DECODING_INFO` (so unrelated tests don't break).
+- `lib/utils/stream_utils.ts` — `buildStreams` becomes async; add
+  internal `probe` helper and module-level cache.
+- `lib/media/stream_controller.ts` — `await` `buildStreams` in
+  `onManifestUpdated_`.
+- `test/utils/stream_utils.test.ts` — extend with capability cases.
+- `test/__framework__/factories.ts` — extend stream factories to
+  attach a synthesised `PROP_DECODING_INFO` by default, so
+  unrelated tests building `VideoStream`/`AudioStream` literals
+  via factories don't break.
 
 ## Risks
 
 - **Existing tests:** every place that builds a `VideoStream` /
-  `AudioStream` literal in tests now needs the symbol present.
-  Mitigated by funnelling construction through factories.
+  `AudioStream` literal in tests now needs the symbol. Mitigated by
+  funnelling construction through factories.
+- **Async seam:** `buildStreams` returning a `Promise` ripples into
+  `StreamController`. One call site, one `await` — small, but worth
+  noting in the plan.
 - **Spec defaults (framerate/channels/samplerate):** wrong values
   could cause `supported: false` on permissive browsers. Use the
   common-case defaults above; revisit when ABR consumes `smooth`.
-- **Async manifest pipeline:** adds one `await` between parse and
-  `MANIFEST_UPDATED`. Negligible for VOD; for live, the manifest
-  refresh interval already absorbs a few extra ms.
+- **Cache lifetime:** module-scoped cache survives all players in
+  the same JS realm. Capabilities don't change in a session, so
+  this is desirable. If a test needs a fresh cache, expose a
+  `__resetCapabilityCache` test-only helper rather than weakening
+  the production lifetime.
