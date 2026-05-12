@@ -14,8 +14,12 @@ export function formatBandwidth(bps: number): string {
  * Used as display text and as select value/React key.
  */
 export function formatStream(stream: Stream): string {
+  let format = `${formatBandwidth(stream.bandwidth)} · ${stream.codec}`;
   if (stream.type === MediaType.VIDEO) {
-    return `${stream.width}x${stream.height} · ${formatBandwidth(stream.bandwidth)} · ${stream.codec}`;
+    format = `${stream.width}x${stream.height} · ${format}`;
   }
-  return `${formatBandwidth(stream.bandwidth)} · ${stream.codec}`;
+  if (stream.type === MediaType.AUDIO) {
+    return `${stream.language} · ${format}`;
+  }
+  return format;
 }

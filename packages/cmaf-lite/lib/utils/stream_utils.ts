@@ -9,6 +9,7 @@ export function buildStreams(manifest: Manifest): Map<MediaType, Stream[]> {
   const result = new Map<MediaType, Stream[]>([
     [MediaType.VIDEO, []],
     [MediaType.AUDIO, []],
+    [MediaType.SUBTITLE, []],
   ]);
   for (const ss of manifest.switchingSets) {
     for (const track of ss.tracks) {
@@ -69,7 +70,7 @@ function projectStream(ss: SwitchingSet, track: Track): Stream {
   const codec = CodecUtils.getNormalizedCodec(ss.codec);
   if (track.type === MediaType.VIDEO && ss.type === MediaType.VIDEO) {
     return {
-      type: track.type,
+      type: MediaType.VIDEO,
       codec,
       bandwidth: track.bandwidth,
       width: track.width,
@@ -82,10 +83,21 @@ function projectStream(ss: SwitchingSet, track: Track): Stream {
   }
   if (track.type === MediaType.AUDIO && ss.type === MediaType.AUDIO) {
     return {
-      type: track.type,
+      type: MediaType.AUDIO,
       codec,
       bandwidth: track.bandwidth,
       language: ss.language,
+      [PROP_HIERARCHY]: {
+        switchingSet: ss,
+        track,
+      },
+    };
+  }
+  if (track.type === MediaType.SUBTITLE && ss.type === MediaType.SUBTITLE) {
+    return {
+      type: MediaType.SUBTITLE,
+      codec,
+      bandwidth: track.bandwidth,
       [PROP_HIERARCHY]: {
         switchingSet: ss,
         track,

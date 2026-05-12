@@ -63,6 +63,10 @@ export function getNormalizedCodec(codec: string): string {
     // AV1
     case base === "av01":
       return "av1";
+    case base === "wvtt":
+      return "vtt";
+    case base === "stpp":
+      return "imsc1";
     default:
       throw new Error(`Unsupported codec: ${codec}`);
   }
