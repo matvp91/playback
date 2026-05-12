@@ -129,12 +129,11 @@ export class AbrController {
     let pick: VideoStream | null = null;
     if (this.isBufferSteady_ && this.useBola_) {
       pick = this.pickFromBola_(streams);
-      // BOLA-O anti-oscillation: when the buffer-derived pick wants to
-      // upgrade above what throughput sustains, cap at the throughput-safe
-      // pick (or stay at current if even that is a downgrade). Mirrors
-      // dash.js BolaRule.js. Without this, a sustained low-bandwidth
-      // regime keeps flipping between throughput's safe pick and BOLA's
-      // full-buffer pick.
+      // Anti-oscillation: when the buffer-derived pick wants to upgrade
+      // above what throughput sustains, cap at the throughput-safe pick
+      // (or stay at current if even that is a downgrade). Without this,
+      // a sustained low-bandwidth regime keeps flipping between
+      // throughput's safe pick and BOLA's full-buffer pick.
       if (
         pick &&
         activeStream &&
@@ -151,6 +150,7 @@ export class AbrController {
     if (!pick) {
       pick = throughputPick;
     }
+    pick = this.applyLowBufferCap_(streams, pick);
     if (!pick || pick === activeStream) {
       return;
     }
@@ -222,5 +222,40 @@ export class AbrController {
       }
     }
     return best ?? streams[0] ?? null;
+  }
+
+  // Underrun safety: cap `pick` at `safeThroughput * frontBuffer /
+  // fragmentDuration` so the next segment can land before the buffer
+  // empties. Suppressed pre-latch (no segments observed yet) — at that
+  // point frontBuffer is 0 and the cap would force the lowest stream
+  // even when the throughput estimate justifies a higher startup pick.
+  private applyLowBufferCap_(
+    streams: VideoStream[],
+    pick: VideoStream | null,
+  ): VideoStream | null {
+    if (!pick || !this.isBufferSteady_) {
+      return pick;
+    }
+    const lowest = streams[0];
+    if (!lowest) {
+      return pick;
+    }
+    const fragDur = lowest.hierarchy.track.maxSegmentDuration;
+    const frontBuffer = this.getFrontBuffer_();
+    const { abr } = this.player_.getConfig();
+    const bw = this.throughput_.getEstimate() ?? abr.defaultBandwidthEstimate;
+    const safeBitrate =
+      (bw * abr.lowBufferSafetyFactor * frontBuffer) / fragDur;
+
+    if (pick.bandwidth <= safeBitrate) {
+      return pick;
+    }
+    let safe: VideoStream | null = null;
+    for (const stream of streams) {
+      if (stream.bandwidth <= safeBitrate) {
+        safe = stream;
+      }
+    }
+    return safe ?? lowest;
   }
 }

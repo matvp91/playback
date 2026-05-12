@@ -18,9 +18,9 @@ estimate while undersampled.
 
 ### BOLA (Buffer Optimized)
 
-Uses buffer level to score each quality tier (BOLA-O,
-arxiv 1601.06748). When the buffer is comfortable, BOLA favors higher
-quality; as the buffer drops, it shifts toward conservative picks.
+Uses buffer level to score each quality tier. When the buffer is
+comfortable, BOLA favors higher quality; as the buffer drops, it
+shifts toward conservative picks.
 
 A one-shot `isBufferSteady` latch gates BOLA's scoring: false until
 the front buffer has crossed `maxSegmentDuration` at least once since
@@ -32,12 +32,28 @@ back to throughput.
 a sustained low-bandwidth regime would otherwise let it pick a tier
 the network can't sustain — buffer drains, hysteresis flips to
 throughput, throughput picks low, buffer recovers, BOLA picks high
-again. Mirroring `dash.js`'s `BolaRule.js`, the controller caps any
-BOLA-driven *upgrade* by the throughput driver's pick: if BOLA's pick
-exceeds both the active stream and the throughput-safe pick, the
-controller falls back to the throughput pick (or stays at active when
-even that would be a downgrade). BOLA is still free to stay or
-downgrade; it just cannot upgrade past what throughput sustains.
+again. The controller caps any BOLA-driven *upgrade* by the
+throughput driver's pick: if BOLA's pick exceeds both the active
+stream and the throughput-safe pick, the controller falls back to
+the throughput pick (or stays at active when even that would be a
+downgrade). BOLA is still free to stay or downgrade; it just cannot
+upgrade past what throughput sustains.
+
+## Low-buffer safety cap
+
+Whichever driver produces the pick, a final cap constrains it to
+what the buffer can absorb:
+
+```
+safeBitrate = throughput * lowBufferSafetyFactor * frontBuffer / fragmentDuration
+```
+
+with `lowBufferSafetyFactor = 0.7` by default. The picked stream is
+demoted to the highest tier whose bandwidth fits under `safeBitrate`,
+so the next segment is guaranteed to land before the buffer empties
+(modulo the safety factor's headroom). Suppressed pre-latch — at
+startup `frontBuffer` is `0` and the cap would otherwise force the
+lowest stream regardless of the throughput estimate.
 
 ## Driver Selection
 
@@ -83,14 +99,8 @@ practical safety without the placeholder buffer's bookkeeping.
 
 ### Abandon-fragment
 
-dash.js abandons in-flight downloads when bandwidth drops below the
-in-progress segment's bitrate. cmaf-lite's `NetworkService` has no
-in-flight progress events; deferred.
+Abandoning in-flight downloads when bandwidth drops below the
+in-progress segment's bitrate would shorten reaction time on sharp
+drops. cmaf-lite's `NetworkService` has no in-flight progress
+events; deferred.
 
-### InsufficientBufferRule
-
-BOLA can pick a stream that won't finish before underrun in
-low-buffer regimes. dash.js v5 caps the pick by
-`safeThroughput * bufferLevel / fragmentDuration * 0.7` in a parallel
-rule (`InsufficientBufferRule.js`). Deferred; cmaf-lite's hysteresis
-(Throughput active below 10s) provides partial coverage.

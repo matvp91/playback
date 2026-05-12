@@ -522,10 +522,9 @@ describe("AbrController", () => {
   });
 
   describe("BOLA anti-oscillation guard", () => {
-    // Mirrors dash.js BolaRule.js: when buffer-driven BOLA wants to
-    // upgrade above what throughput sustains, cap at the throughput-safe
-    // pick (or stay at the current stream if even that would be a
-    // downgrade).
+    // When buffer-driven BOLA wants to upgrade above what throughput
+    // sustains, cap at the throughput-safe pick (or stay at the current
+    // stream if even that would be a downgrade).
     const setup = (frontBuffer: number) => {
       vi.useFakeTimers();
       const media = document.createElement("video");
@@ -605,6 +604,112 @@ describe("AbrController", () => {
       vi.advanceTimersByTime(1100);
 
       expect(adaptations).toEqual([streams[1]]);
+      controller.destroy();
+    });
+  });
+
+  describe("low-buffer safety cap", () => {
+    // Cap the picked stream at `safeThroughput * frontBuffer /
+    // fragmentDuration` so the next segment can land before the buffer
+    // empties.
+    const setup = (initialFrontBuffer: number) => {
+      vi.useFakeTimers();
+      const media = document.createElement("video");
+      Object.defineProperty(media, "currentTime", { value: 0 });
+      player.setMedia(media);
+      player.setBuffered(
+        MediaType.VIDEO,
+        createTimeRanges([0, initialFrontBuffer]),
+      );
+      const controller = new AbrController(player as never);
+      player.emit(Events.MEDIA_ATTACHED, {
+        media,
+        mediaSource: {} as MediaSource,
+      });
+      // Latch isBufferSteady_ if initialFrontBuffer >= maxSegmentDuration
+      // (4s default). useBola_ stays false here since initial is < 20s.
+      player.emit(Events.BUFFER_APPENDED, {
+        type: MediaType.VIDEO,
+        segment: streams[0]!.hierarchy.track.segments[0]!,
+        data: new ArrayBuffer(0),
+      });
+      return controller;
+    };
+
+    const sampleThroughput = (bitsPerSecond: number) => {
+      player.emit(Events.NETWORK_RESPONSE, {
+        type: NetworkRequestType.SEGMENT,
+        response: {
+          durationSec: 1,
+          arrayBuffer: new ArrayBuffer(bitsPerSecond / 8),
+          url: "x",
+          status: 200,
+          headers: new Headers(),
+        } as never,
+      });
+    };
+
+    it("forces a deeper downgrade than throughput alone when buffer is shallow", () => {
+      // Latch with 5s buffer (>= 4s maxSegmentDuration), then drop to
+      // 3s. Active = streams[2] (3M), throughput = 2.5 Mbps. Throughput
+      // driver alone would pick streams[1] (1.5M <= 2.5 * 0.95 stay
+      // multiplier). Low-buffer cap: safe = 2.5M * 0.7 * 3 / 4
+      // ≈ 1.31 Mbps — only streams[0] fits, so the cap deepens the
+      // downgrade to streams[0].
+      const controller = setup(5);
+      player.setBuffered(MediaType.VIDEO, createTimeRanges([0, 3]));
+      const cfg = configWith({ switchInterval: 0, minTotalBytes: 1_000 });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[2]!);
+      sampleThroughput(2_500_000);
+
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+
+      expect(adaptations).toEqual([streams[0]]);
+      controller.destroy();
+    });
+
+    it("does not bind when the buffer comfortably absorbs the next segment", () => {
+      // Same throughput and active as the previous test, but at 8s
+      // buffer: safe = 2.5M * 0.7 * 8 / 4 = 3.5 Mbps — streams[1] fits,
+      // cap is non-binding. Throughput driver's pick (streams[1]) is
+      // emitted unchanged.
+      const controller = setup(15);
+      player.setBuffered(MediaType.VIDEO, createTimeRanges([0, 8]));
+      const cfg = configWith({ switchInterval: 0, minTotalBytes: 1_000 });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[2]!);
+      sampleThroughput(2_500_000);
+
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+
+      expect(adaptations).toEqual([streams[1]]);
+      controller.destroy();
+    });
+
+    it("is suppressed before the steady latch engages (bootstrap)", () => {
+      // Empty buffer, no segment appended yet — isBufferSteady_ stays
+      // false. With a generous default bandwidth (10 Mbps), the
+      // throughput driver picks streams[2]. The low-buffer cap would
+      // otherwise force streams[0] (safe = 10M * 0.7 * 0 / 4 = 0); its
+      // suppression preserves the upstream pick during bootstrap.
+      const controller = setup(0);
+      const cfg = configWith({
+        switchInterval: 0,
+        defaultBandwidthEstimate: 10_000_000,
+      });
+      player.setConfig(cfg);
+      player.setActiveVideoStream(streams[0]!);
+
+      const adaptations: VideoStream[] = [];
+      player.on(Events.ADAPTATION, (e) => adaptations.push(e.stream));
+      vi.advanceTimersByTime(1100);
+
+      expect(adaptations).toEqual([streams[2]]);
       controller.destroy();
     });
   });

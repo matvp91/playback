@@ -44,8 +44,7 @@ stays as-is.
 - Modifying BOLA scoring (`pickFromBola_`). Unchanged.
 - Modifying driver selection (the `useBola_` / `isBufferSteady_`
   hysteresis). Unchanged.
-- Generalising to multi-rule aggregation à la dash.js
-  `ABRRulesCollection`. Out of scope.
+- Generalising to multi-rule aggregation. Out of scope.
 
 ## Design
 
