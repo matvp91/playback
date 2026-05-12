@@ -90,6 +90,26 @@ probing is added, but the storage shape doesn't need to change.
 The symbol is **not** exported from the package entry. It's an
 internal back-channel for controllers (ABR in particular).
 
+### Stream projection
+
+`projectStream` gains an optional third parameter:
+
+```ts
+function projectStream(
+  ss: SwitchingSet,
+  track: Track,
+  info?: MediaCapabilitiesDecodingInfo,
+): Stream
+```
+
+The video and audio branches attach `info` to the literal directly
+(no placeholder, no cast). The subtitle branch ignores it.
+`projectStream` asserts `info` is present in the video/audio
+branches so the type stays honest at the symbol assignment site.
+
+`buildStreams` calls `projectStream(ss, track, info)` after the
+probe resolves, so the assertion always holds by construction.
+
 ### `buildStreams` flow
 
 ```
