@@ -132,21 +132,22 @@ non-empty input is.
 
 ### Probe cache
 
-A module-level `Map<string, Promise<MediaCapabilitiesDecodingInfo>>`
-in `stream_utils.ts`, keyed by a stable string derived from the
-probe inputs:
-
-```
-key = `${type}|${codec}|${width}x${height}|${bandwidth}`   # video
-key = `${type}|${codec}|${bandwidth}`                       # audio
-```
+A module-level `WeakMap<Track, Promise<MediaCapabilitiesDecodingInfo>>`
+in `stream_utils.ts`. `Track` is the natural key: it's stable
+across live manifest updates (the parser updates tracks in place,
+per the manifest-apply work) and a single `Track` corresponds to a
+single probe input (its `bandwidth`, `width`, `height`, plus the
+parent `SwitchingSet.codec`).
 
 Caching the `Promise` (not the resolved value) deduplicates
-concurrent probes for the same key. The cache lives for the
-lifetime of the module — live manifest updates that re-add the same
-representation get a cache hit. Memory cost is bounded by the
-number of distinct (codec, resolution, bitrate) tuples a player
-ever sees, which is small.
+concurrent probes. Entries are reclaimed automatically when a
+`Track` is dropped from the manifest and becomes unreachable, so
+no explicit invalidation, no module-lifetime concerns, no
+test-only reset helper.
+
+Two distinct Tracks with identical probe inputs each get their own
+probe — wasted call, not a correctness issue, and manifests don't
+duplicate representations like that in practice.
 
 No invalidation. Device capabilities don't change within a session.
 
@@ -220,8 +221,8 @@ Extend `test/utils/stream_utils.test.ts`:
     streams → does not throw (no video to begin with).
   - Subtitle streams pass through untouched (no symbol, no probe
     call recorded).
-  - Probe cache: same (codec, resolution, bitrate) across two
-    `buildStreams` calls → `decodingInfo` invoked once.
+  - Probe cache: same `Track` across two `buildStreams` calls →
+    `decodingInfo` invoked once.
   - Fallback path (no `mediaCapabilities`) produces synthesised
     result with `smooth: false`, `powerEfficient: false`.
 
@@ -251,8 +252,9 @@ Extend `test/utils/stream_utils.test.ts`:
 - **Spec defaults (framerate/channels/samplerate):** wrong values
   could cause `supported: false` on permissive browsers. Use the
   common-case defaults above; revisit when ABR consumes `smooth`.
-- **Cache lifetime:** module-scoped cache survives all players in
-  the same JS realm. Capabilities don't change in a session, so
-  this is desirable. If a test needs a fresh cache, expose a
-  `__resetCapabilityCache` test-only helper rather than weakening
-  the production lifetime.
+- **Cache scoping:** the `WeakMap<Track, …>` is module-scoped, so
+  it spans all players in the same JS realm. That's desirable —
+  capabilities don't change in a session — and the WeakMap reclaims
+  entries automatically as tracks become unreachable. Tests that
+  need cache isolation construct fresh `Track` objects via
+  factories rather than reaching into the cache.
