@@ -108,6 +108,16 @@ export class Player extends EventEmitter<EventMap> {
   }
 
   /**
+   * Returns the current throughput estimate in bits/second. Always
+   * returns a number — the configured default
+   * (`config.abr.defaultBandwidthEstimate`) is applied while the
+   * estimator is still undersampled.
+   */
+  getThroughputEstimate(): number {
+    return this.abrController_.getThroughputEstimate();
+  }
+
+  /**
    * Returns buffered time ranges for the given media type.
    */
   getBuffered(type: MediaType) {

@@ -89,9 +89,10 @@ keep playback moving.
 
 ### AbrController
 
-Evaluates four independent rules (throughput, BOLA,
-insufficient buffer, dropped frames) on a configurable
-interval. Picks the most conservative result. See
+Runs a single decision flow per evaluation tick: a throughput-driven
+pick using a dual EWMA estimator, raised by a buffer-aware uplift
+when a `useBola` hysteresis confirms the buffer is comfortable.
+Owns the eval loop and the switch-emit throttle. See
 [abr.md](abr.md) for details.
 
 ## Network Layer
