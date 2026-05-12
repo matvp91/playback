@@ -1,3 +1,4 @@
+import { PROP_HIERARCHY } from "../constants";
 import type { Manifest, SwitchingSet, Track } from "../types/manifest";
 import type { Preference, Stream } from "../types/media";
 import { MediaType } from "../types/media";
@@ -73,7 +74,7 @@ function projectStream(ss: SwitchingSet, track: Track): Stream {
       bandwidth: track.bandwidth,
       width: track.width,
       height: track.height,
-      hierarchy: {
+      [PROP_HIERARCHY]: {
         switchingSet: ss,
         track,
       },
@@ -85,7 +86,7 @@ function projectStream(ss: SwitchingSet, track: Track): Stream {
       codec,
       bandwidth: track.bandwidth,
       language: ss.language,
-      hierarchy: {
+      [PROP_HIERARCHY]: {
         switchingSet: ss,
         track,
       },

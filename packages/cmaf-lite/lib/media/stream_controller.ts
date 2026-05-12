@@ -1,3 +1,4 @@
+import { PROP_HIERARCHY } from "../constants";
 import type {
   AbrAdaptEvent,
   BufferFlushedEvent,
@@ -130,14 +131,12 @@ export class StreamController {
       networkService.cancel(mediaState.request);
     }
 
-    if (
-      !oldStream ||
-      oldStream.hierarchy.switchingSet !== stream.hierarchy.switchingSet
-    ) {
+    const { switchingSet } = stream[PROP_HIERARCHY];
+    if (!oldStream || oldStream[PROP_HIERARCHY].switchingSet !== switchingSet) {
       if (isAV(type)) {
         this.player_.emit(Events.BUFFER_CODECS, {
           type,
-          codec: stream.hierarchy.switchingSet.codec,
+          codec: switchingSet.codec,
         });
       }
       // Non-AV types (e.g. text) do not use MSE SourceBuffers,
@@ -227,9 +226,10 @@ export class StreamController {
       this.mediaStates_.set(type, mediaState);
 
       if (isAV(type)) {
+        const { switchingSet } = stream[PROP_HIERARCHY];
         this.player_.emit(Events.BUFFER_CODECS, {
           type,
-          codec: stream.hierarchy.switchingSet.codec,
+          codec: switchingSet.codec,
         });
       }
 
@@ -353,14 +353,15 @@ export class StreamController {
     if (!mediaState.lastSegment) {
       return null;
     }
-    const { segments } = stream.hierarchy.track;
-    const lastIndex = segments.indexOf(mediaState.lastSegment);
-    return segments[lastIndex + 1] ?? null;
+    const { track } = stream[PROP_HIERARCHY];
+    const lastIndex = track.segments.indexOf(mediaState.lastSegment);
+    return track.segments[lastIndex + 1] ?? null;
   }
 
   private getSegmentForTime_(stream: Stream, time: number): Segment | null {
     const { maxSegmentLookupTolerance } = this.player_.getConfig();
-    return ArrayUtils.binarySearch(stream.hierarchy.track.segments, (seg) => {
+    const { track } = stream[PROP_HIERARCHY];
+    return ArrayUtils.binarySearch(track.segments, (seg) => {
       if (time >= seg.start && time < seg.end) {
         return 0;
       }
@@ -385,7 +386,8 @@ export class StreamController {
     if (!mediaState.lastSegment) {
       return false;
     }
-    const { segments } = stream.hierarchy.track;
+    const { track } = stream[PROP_HIERARCHY];
+    const { segments } = track;
     return segments.indexOf(mediaState.lastSegment) === segments.length - 1;
   }
 

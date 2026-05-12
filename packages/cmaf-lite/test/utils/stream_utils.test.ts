@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PROP_HIERARCHY } from "../../lib/constants";
 import type { Preference, VideoStream } from "../../lib/types/media";
 import { MediaType } from "../../lib/types/media";
 import {
@@ -178,8 +179,9 @@ describe("StreamUtils", () => {
         (ss) => ss.type === MediaType.VIDEO,
       )!;
       const expectedTrack = expectedSwitchingSet.tracks[0]!;
-      expect(videoStream.hierarchy.switchingSet).toBe(expectedSwitchingSet);
-      expect(videoStream.hierarchy.track).toBe(expectedTrack);
+      const { switchingSet, track } = videoStream[PROP_HIERARCHY];
+      expect(switchingSet).toBe(expectedSwitchingSet);
+      expect(track).toBe(expectedTrack);
     });
 
     it("sorts streams by bandwidth ascending for ABR", () => {

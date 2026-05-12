@@ -18,3 +18,5 @@ export const EMPTY_MANIFEST: Manifest = {
   end: 0,
   switchingSets: [],
 };
+
+export const PROP_HIERARCHY = Symbol.for("cl.hierarchy");

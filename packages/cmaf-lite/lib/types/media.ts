@@ -1,3 +1,4 @@
+import type { PROP_HIERARCHY } from "../constants";
 import type { SwitchingSet, Track } from "./manifest";
 
 /**
@@ -54,7 +55,7 @@ export interface VideoStream extends BaseStream {
   width: number;
   /** Video height. */
   height: number;
-  hierarchy: StreamHierarchy<MediaType.VIDEO>;
+  [PROP_HIERARCHY]: StreamHierarchy<MediaType.VIDEO>;
 }
 
 /**
@@ -66,7 +67,7 @@ export interface AudioStream extends BaseStream {
   type: MediaType.AUDIO;
   /** Language */
   language: string;
-  hierarchy: StreamHierarchy<MediaType.AUDIO>;
+  [PROP_HIERARCHY]: StreamHierarchy<MediaType.AUDIO>;
 }
 
 /**
@@ -78,7 +79,7 @@ export interface AudioStream extends BaseStream {
  */
 export interface SubtitleStream extends BaseStream {
   type: MediaType.SUBTITLE;
-  hierarchy: StreamHierarchy<MediaType.SUBTITLE>;
+  [PROP_HIERARCHY]: StreamHierarchy<MediaType.SUBTITLE>;
 }
 
 /**
