@@ -131,39 +131,13 @@ after the cap is deleted). All other keys remain unchanged.
 
 ## Testing
 
-`test/abr/abr_controller.test.ts` shrinks to match the new surface:
+`packages/cmaf-lite/test/abr/abr_controller.test.ts` is removed
+alongside its only consumer of the stub framework
+(`test/__framework__/abr_stubs.ts`). A new ABR test surface will be
+designed as part of a separate testing-framework pass; covering the
+new controller through the old stubs is not a goal of this change.
 
-**Keep, with adjustments to match the simplified evaluate_:**
-
-- Construction / destruction tests.
-- `ADAPTATION` emission on tick.
-- `NETWORK_RESPONSE` forwarding to estimator.
-- `MEDIA_ATTACHED` / `seeking` handler attachment.
-- `switchInterval` throttle behaviour.
-- `useBola_` hysteresis: enters at `2/3 * fbl`, exits at
-  `1/3 * fbl`, dead zone holds previous state, resets on
-  `seeking`.
-
-**Delete:**
-
-- The `isBufferSteady_ latch` describe (latch is gone).
-- The `BOLA math (via inlined pickBolaStream_)` describe (no
-  more BOLA math).
-- The `low-buffer safety cap` describe (cap is gone).
-
-**Replace:**
-
-- The `BOLA anti-oscillation guard` describe is reworked to test
-  the new "buffer-aware uplift" path:
-  - With `useBola_ = true` and EWMA = 2.4M, active = 500k: the
-    uplift raises the pick from throughput's stay (500k) to the
-    highest stream under 2.28M = 1.5M. (Same numerical outcome
-    as today.)
-  - With `useBola_ = true` and EWMA = 600k, active = 500k: the
-    uplift's ceiling = 570k → only 500k fits → pick stays at
-    active = 500k, no emit. (Same outcome as today.)
-  - With `useBola_ = false`, the uplift is suppressed; throughput
-    drives alone.
+`test/abr/throughput_estimator.test.ts` is unaffected and stays.
 
 ## Out of scope
 
