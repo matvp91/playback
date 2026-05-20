@@ -140,12 +140,16 @@ export function mockMediaCapabilities(
 ) {
   // happy-dom doesn't ship `navigator.mediaCapabilities` by default.
   // Define it lazily so we can vi.spyOn it.
-  const nav = navigator as Navigator & { mediaCapabilities?: MediaCapabilities };
+  const nav = navigator as Navigator & {
+    mediaCapabilities?: MediaCapabilities;
+  };
   if (!nav.mediaCapabilities) {
     Object.defineProperty(nav, "mediaCapabilities", {
       configurable: true,
       value: { decodingInfo: async () => info },
     });
   }
-  return vi.spyOn(nav.mediaCapabilities!, "decodingInfo").mockResolvedValue(info);
+  return vi
+    .spyOn(nav.mediaCapabilities!, "decodingInfo")
+    .mockResolvedValue(info);
 }

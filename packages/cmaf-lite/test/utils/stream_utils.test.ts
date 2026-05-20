@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROP_DECODING_INFO, PROP_HIERARCHY } from "../../lib/constants";
-import type { AudioStream, Preference, VideoStream } from "../../lib/types/media";
+import type {
+  AudioStream,
+  Preference,
+  VideoStream,
+} from "../../lib/types/media";
 import { MediaType } from "../../lib/types/media";
 import {
   buildStreams,
@@ -127,7 +131,9 @@ describe("pickClosestByBandwidth", () => {
   // Build distinct VideoStreams via the manifest factories. Each track
   // gets a slightly different width/height so `buildStreams` does not
   // dedupe them (dedup compares type + codec + resolution).
-  const videoStreamsFor = async (bandwidths: number[]): Promise<VideoStream[]> => {
+  const videoStreamsFor = async (
+    bandwidths: number[],
+  ): Promise<VideoStream[]> => {
     const manifest = createManifest({
       switchingSets: [
         createVideoSwitchingSet({
@@ -261,7 +267,11 @@ describe("StreamUtils", () => {
           createVideoSwitchingSet({
             tracks: [
               createVideoTrack({ bandwidth: 500_000, width: 640, height: 360 }),
-              createVideoTrack({ bandwidth: 5_000_000, width: 3840, height: 2160 }),
+              createVideoTrack({
+                bandwidth: 5_000_000,
+                width: 3840,
+                height: 2160,
+              }),
             ],
           }),
         ],
