@@ -1,4 +1,8 @@
-import type { PROP_DECODING_INFO, PROP_HIERARCHY, PROP_KEY_SYSTEM_ACCESS } from "../constants";
+import type {
+  PROP_DECODING_INFO,
+  PROP_HIERARCHY,
+  PROP_KEY_SYSTEM_ACCESS,
+} from "../constants";
 import type { SwitchingSet, Track } from "./manifest";
 
 /**

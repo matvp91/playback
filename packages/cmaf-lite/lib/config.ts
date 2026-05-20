@@ -1,6 +1,6 @@
 import type { Path, PathValue } from "./types/helpers";
-import { KeySystem } from "./types/media";
 import type { Preference } from "./types/media";
+import { KeySystem } from "./types/media";
 import type { NetworkRequestOptions } from "./types/net";
 
 /**
