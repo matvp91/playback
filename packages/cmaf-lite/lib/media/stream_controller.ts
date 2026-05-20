@@ -80,7 +80,7 @@ export class StreamController {
     this.mediaStates_.clear();
   }
 
-  private onManifestUpdated_ = (event: ManifestUpdatedEvent) => {
+  private onManifestUpdated_ = async (event: ManifestUpdatedEvent) => {
     // Update manifest info.
     this.isLive_ = event.manifest.isLive;
     this.rangeStart_ = event.manifest.start;
@@ -88,7 +88,7 @@ export class StreamController {
 
     if (!event.isUpdate) {
       // The initial manifest can be processed.
-      this.streams_ = StreamUtils.buildStreams(event.manifest);
+      this.streams_ = await StreamUtils.buildStreams(event.manifest);
       log.info("Streams", this.streams_);
       this.player_.emit(Events.STREAMS_CREATED);
       this.tryStart_();
