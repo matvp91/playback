@@ -243,13 +243,29 @@ export class EmeController {
   }
 
   private async teardown_() {
-    if (this.onEncrypted_ && this.media_) {
-      this.media_.removeEventListener("encrypted", this.onEncrypted_);
-    }
+    // Snapshot all fields we need before any await so that a concurrent
+    // re-attach (MEDIA_DETACHING → MEDIA_ATTACHED) cannot observe or corrupt
+    // the state we're tearing down.
+    const media = this.media_;
+    const mediaKeys = this.mediaKeys_;
+    const sessions = Array.from(this.activeSessions_);
+    const onEncrypted = this.onEncrypted_;
+    const mediaKeysAttached = this.mediaKeysAttached_;
+
+    // Reset instance state synchronously — any concurrent re-activation sees a
+    // clean slate and our awaits below cannot touch the new state.
+    this.media_ = null;
+    this.mediaKeys_ = null;
+    this.mediaKeysAttached_ = false;
+    this.keySystem_ = null;
+    this.manifest_ = null;
+    this.activeSessions_.clear();
+    this.psshSeen_.clear();
     this.onEncrypted_ = null;
 
-    const sessions = Array.from(this.activeSessions_);
-    this.activeSessions_.clear();
+    if (onEncrypted && media) {
+      media.removeEventListener("encrypted", onEncrypted);
+    }
     for (const session of sessions) {
       try {
         await session.close();
@@ -257,21 +273,15 @@ export class EmeController {
         // Closing an already-closed session can throw; ignore.
       }
     }
-    this.psshSeen_.clear();
-
-    if (this.media_ && this.mediaKeysAttached_) {
+    if (media && mediaKeysAttached) {
       try {
-        await this.media_.setMediaKeys(null);
+        await media.setMediaKeys(null);
       } catch {
         // Detaching MediaKeys can race with element teardown; ignore.
       }
     }
-
-    this.mediaKeys_ = null;
-    this.mediaKeysAttached_ = false;
-    this.keySystem_ = null;
-    this.manifest_ = null;
-    this.media_ = null;
+    // `mediaKeys` is a CDM handle — GC handles cleanup, no explicit await needed.
+    void mediaKeys;
   }
 }
 
