@@ -103,9 +103,9 @@ async function projectStream(
 ): Promise<Stream | null>
 ```
 
-The video and audio branches call `probeTrack(codec, track)`. If
-it returns `null`, `projectStream` returns `null`. Otherwise the
-returned `info` is attached to the constructed stream via
+The video and audio branches `await probeTrack(codec, track)`.
+If `info.supported` is false, `projectStream` returns `null`.
+Otherwise `info` is attached to the constructed stream via
 `PROP_DECODING_INFO`. The subtitle branch never probes and returns
 the stream directly.
 
@@ -115,15 +115,15 @@ the stream directly.
 async function probeTrack(
   codec: string,
   track: Track,
-): Promise<MediaCapabilitiesDecodingInfo | null>
+): Promise<MediaCapabilitiesDecodingInfo>
 ```
 
 Switches on `track.type` to build either a video or audio
-`MediaDecodingConfiguration`, calls
-`navigator.mediaCapabilities.decodingInfo`, and returns the result
-when `supported === true`; otherwise `null`. Throws on subtitle —
-calling it with a non-probeable type is a programmer error, not a
-runtime "unsupported" condition.
+`MediaDecodingConfiguration` and calls
+`navigator.mediaCapabilities.decodingInfo`. Returns the raw result
+verbatim — the supported-or-not decision lives in `projectStream`.
+Throws on subtitle — calling it with a non-probeable type is a
+programmer error.
 
 ### `buildStreams` flow
 
