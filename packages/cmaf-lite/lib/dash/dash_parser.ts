@@ -1,7 +1,20 @@
 import { processUriTemplate } from "@svta/cml-dash";
 import type * as txml from "txml";
 import { EMPTY_MANIFEST } from "../constants";
-import type { Manifest, Segment, SwitchingSet, Track } from "../types/manifest";
+import {
+  keySystemFromSchemeIdUri,
+  keySystemInfoFromRaw,
+  MP4_PROTECTION_SCHEME,
+} from "../drm/drm_utils";
+import type {
+  KeySystemInfo,
+  Manifest,
+  Protection,
+  Segment,
+  SwitchingSet,
+  Track,
+} from "../types/manifest";
+import type { KeySystem } from "../types/media";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
@@ -9,7 +22,6 @@ import * as ManifestUtils from "../utils/manifest_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import * as DashHelpers from "./dash_helpers";
-import { readProtection } from "./protection";
 
 type ReadContext = {
   manifest: Manifest;
@@ -228,6 +240,65 @@ function getAdaptationSetId(
     return `${id}:${language}`;
   }
   throw new Error("Unsupported media type");
+}
+
+function readProtection(
+  adaptationSet: txml.TNode,
+  representations: txml.TNode[],
+): Protection | null {
+  let elements = XmlUtils.children(adaptationSet, "ContentProtection");
+  if (elements.length === 0 && representations[0]) {
+    elements = XmlUtils.children(representations[0], "ContentProtection");
+  }
+  if (elements.length === 0) {
+    return null;
+  }
+
+  let scheme: "cenc" | "cbcs" | null = null;
+  let defaultKid: string | null = null;
+  const keySystems: Partial<Record<KeySystem, KeySystemInfo>> = {};
+
+  for (const el of elements) {
+    const schemeIdUri = XmlUtils.attr(el, "schemeIdUri", XmlUtils.parseString);
+    if (!schemeIdUri) {
+      continue;
+    }
+
+    if (schemeIdUri === MP4_PROTECTION_SCHEME) {
+      const value = XmlUtils.attr(el, "value", XmlUtils.parseString);
+      if (value === "cenc" || value === "cbcs") {
+        scheme = value;
+      }
+      const kid = XmlUtils.attr(el, "cenc:default_KID", XmlUtils.parseString);
+      if (kid) {
+        defaultKid = kid.toLowerCase();
+      }
+      continue;
+    }
+
+    const keySystem = keySystemFromSchemeIdUri(schemeIdUri);
+    if (!keySystem) {
+      continue;
+    }
+    const value = XmlUtils.attr(el, "value", XmlUtils.parseString);
+    const psshNode = XmlUtils.children(el, "cenc:pssh")[0];
+    const psshText = psshNode ? XmlUtils.text(psshNode) : undefined;
+    keySystems[keySystem] = keySystemInfoFromRaw(
+      keySystem,
+      value ?? undefined,
+      psshText,
+    );
+  }
+
+  if (scheme === null) {
+    return null;
+  }
+  if (defaultKid === null) {
+    throw new Error(
+      "ContentProtection: mp4protection present without cenc:default_KID",
+    );
+  }
+  return { scheme, defaultKid, keySystems };
 }
 
 function parseAdaptationSet(

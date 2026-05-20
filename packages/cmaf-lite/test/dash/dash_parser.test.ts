@@ -601,6 +601,27 @@ describe("DashParser", () => {
         video.protection?.keySystems[KeySystem.WIDEVINE]?.pssh,
       ).toBeInstanceOf(Uint8Array);
     });
+
+    it("parses FairPlay contentId and cbcs scheme from the value attribute", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-protected-fairplay.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.protection?.scheme).toBe("cbcs");
+      expect(video.protection?.keySystems[KeySystem.FAIRPLAY]?.contentId).toBe(
+        "skd://example/abc123",
+      );
+    });
+
+    it("throws when mp4protection is present but cenc:default_KID is missing", () => {
+      expect(() =>
+        DashParser.create(
+          loadFixture("dash-parser/vod-protected-no-default-kid.mpd"),
+          sourceUrl,
+        ),
+      ).toThrow(/default_KID/);
+    });
   });
 
   describe("update — live reconciliation", () => {
