@@ -20,3 +20,4 @@ export const EMPTY_MANIFEST: Manifest = {
 };
 
 export const PROP_HIERARCHY = Symbol("hierarchy");
+export const PROP_DECODING_INFO = Symbol("decodingInfo");
