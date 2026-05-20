@@ -1,5 +1,15 @@
 import type * as txml from "txml";
-import type { SwitchingSet } from "../types/manifest";
+import {
+  keySystemFromSchemeIdUri,
+  keySystemInfoFromRaw,
+} from "../drm/drm_utils";
+import type { KeySystem } from "../types/drm";
+import { EncryptionScheme } from "../types/drm";
+import type {
+  KeySystemInfo,
+  Protection,
+  SwitchingSet,
+} from "../types/manifest";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
@@ -155,4 +165,65 @@ export function resolveLanguage(node: txml.TNode) {
   const lang = XmlUtils.attr(node, "lang", XmlUtils.parseString);
   // TODO(matvp): Make language nullable instead of defaulting to unk.
   return lang && lang !== "und" ? LanguageUtils.toBCP47(lang) : "unk";
+}
+
+export function resolveProtection(
+  adaptationSet: txml.TNode,
+  representations: txml.TNode[],
+): Protection | null {
+  let elements = XmlUtils.children(adaptationSet, "ContentProtection");
+  if (elements.length === 0 && representations[0]) {
+    elements = XmlUtils.children(representations[0], "ContentProtection");
+  }
+  if (elements.length === 0) {
+    return null;
+  }
+
+  let scheme: EncryptionScheme | null = null;
+  let defaultKid: string | null = null;
+  const keySystems: Partial<Record<KeySystem, KeySystemInfo>> = {};
+
+  for (const el of elements) {
+    const schemeIdUri = XmlUtils.attr(el, "schemeIdUri", XmlUtils.parseString);
+    if (!schemeIdUri) {
+      continue;
+    }
+
+    // DASH scheme URN for the mp4protection element that carries scheme
+    // and default_KID.
+    if (schemeIdUri === "urn:mpeg:dash:mp4protection:2011") {
+      const value = XmlUtils.attr(el, "value", XmlUtils.parseString);
+      if (value === EncryptionScheme.CENC || value === EncryptionScheme.CBCS) {
+        scheme = value;
+      }
+      const kid = XmlUtils.attr(el, "cenc:default_KID", XmlUtils.parseString);
+      if (kid) {
+        defaultKid = kid.toLowerCase();
+      }
+      continue;
+    }
+
+    const keySystem = keySystemFromSchemeIdUri(schemeIdUri);
+    if (!keySystem) {
+      continue;
+    }
+    const value = XmlUtils.attr(el, "value", XmlUtils.parseString);
+    const psshNode = XmlUtils.children(el, "cenc:pssh")[0];
+    const psshText = psshNode ? XmlUtils.text(psshNode) : undefined;
+    keySystems[keySystem] = keySystemInfoFromRaw(
+      keySystem,
+      value ?? undefined,
+      psshText,
+    );
+  }
+
+  if (scheme === null) {
+    return null;
+  }
+  if (defaultKid === null) {
+    throw new Error(
+      "ContentProtection: mp4protection present without cenc:default_KID",
+    );
+  }
+  return { scheme, defaultKid, keySystems };
 }

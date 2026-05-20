@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as DashParser from "../../lib/dash/dash_parser";
+import { EncryptionScheme, KeySystem } from "../../lib/types/drm";
 import { MediaType } from "../../lib/types/media";
 import { loadFixture } from "../fixtures";
 import { findAudio, findSubtitle, findVideo } from "./helpers";
@@ -563,6 +564,64 @@ describe("DashParser", () => {
       expect(track.segments[1]).toBe(snapshot[2]);
       expect(track.segments[2]).toBe(snapshot[3]);
       expect(track.segments[3]).toBe(snapshot[4]);
+    });
+  });
+
+  describe("ContentProtection", () => {
+    it("attaches a protection model to the switching set when present", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-protected-widevine-playready.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.protection?.scheme).toBe(EncryptionScheme.CENC);
+      expect(video.protection?.defaultKid).toBe(
+        "abcdef01-2345-6789-abcd-ef0123456789",
+      );
+      expect(
+        video.protection?.keySystems[KeySystem.WIDEVINE]?.pssh,
+      ).toBeInstanceOf(Uint8Array);
+    });
+
+    it("leaves protection undefined on clear switching sets", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
+      expect(findVideo(manifest).protection).toBeUndefined();
+    });
+
+    it("parses ContentProtection located on Representation elements", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-protected-representation-level.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.protection?.scheme).toBe(EncryptionScheme.CENC);
+      expect(
+        video.protection?.keySystems[KeySystem.WIDEVINE]?.pssh,
+      ).toBeInstanceOf(Uint8Array);
+    });
+
+    it("parses FairPlay contentId and cbcs scheme from the value attribute", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-protected-fairplay.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.protection?.scheme).toBe(EncryptionScheme.CBCS);
+      expect(video.protection?.keySystems[KeySystem.FAIRPLAY]?.contentId).toBe(
+        "skd://example/abc123",
+      );
+    });
+
+    it("throws when mp4protection is present but cenc:default_KID is missing", () => {
+      expect(() =>
+        DashParser.create(
+          loadFixture("dash-parser/vod-protected-no-default-kid.mpd"),
+          sourceUrl,
+        ),
+      ).toThrow(/default_KID/);
     });
   });
 

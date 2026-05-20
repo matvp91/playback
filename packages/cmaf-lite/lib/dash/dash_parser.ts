@@ -236,12 +236,17 @@ function parseAdaptationSet(
 ): SwitchingSet {
   const type = DashHelpers.resolveType(adaptationSet, representations);
   const codec = DashHelpers.resolveCodec(adaptationSet, representations);
+  const protection = DashHelpers.resolveProtection(
+    adaptationSet,
+    representations,
+  );
 
   if (type === MediaType.VIDEO) {
     return {
       id,
       type,
       codec,
+      ...(protection ? { protection } : {}),
       tracks: [],
     };
   }
@@ -252,6 +257,7 @@ function parseAdaptationSet(
       type,
       codec,
       language,
+      ...(protection ? { protection } : {}),
       tracks: [],
     };
   }
@@ -262,6 +268,7 @@ function parseAdaptationSet(
       type,
       codec,
       language,
+      ...(protection ? { protection } : {}),
       tracks: [],
     };
   }

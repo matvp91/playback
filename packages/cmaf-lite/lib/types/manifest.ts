@@ -1,3 +1,4 @@
+import type { EncryptionScheme, KeySystem } from "./drm";
 import type { MediaType } from "./media";
 
 /**
@@ -6,6 +7,32 @@ import type { MediaType } from "./media";
  * @public
  */
 export const LANGUAGE_UNKNOWN = "unk";
+
+/**
+ * Encryption metadata.
+ *
+ * @public
+ */
+export interface Protection {
+  /** Encryption scheme. */
+  scheme: EncryptionScheme;
+  /** Default Key ID. */
+  defaultKid: string;
+  /** Per-key-system init material. */
+  keySystems: Partial<Record<KeySystem, KeySystemInfo>>;
+}
+
+/**
+ * Per-key-system init material.
+ *
+ * @public
+ */
+export interface KeySystemInfo {
+  /** CENC PSSH blob (Widevine, PlayReady). */
+  pssh?: Uint8Array;
+  /** FairPlay content identifier (from `skd://...`). */
+  contentId?: string;
+}
 
 /**
  * Parsed manifest representing a CMAF presentation.
@@ -34,6 +61,7 @@ export interface BaseSwitchingSet {
   id: string;
   /** Codec string. */
   codec: string;
+  protection?: Protection;
 }
 
 /**
