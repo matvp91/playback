@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PROP_HIERARCHY } from "../../lib/constants";
+import { PROP_DECODING_INFO, PROP_HIERARCHY } from "../../lib/constants";
 import type { Preference, VideoStream } from "../../lib/types/media";
 import { MediaType } from "../../lib/types/media";
 import {
@@ -8,6 +8,7 @@ import {
   pickClosestByBandwidth,
 } from "../../lib/utils/stream_utils";
 import {
+  createDecodingInfo,
   createManifest,
   createVideoSwitchingSet,
   createVideoTrack,
@@ -236,6 +237,19 @@ describe("StreamUtils", () => {
       });
       const streams = await buildStreams(manifest);
       expect(streams.get(MediaType.VIDEO)).toHaveLength(2);
+    });
+
+    it("attaches PROP_DECODING_INFO to every video and audio stream", async () => {
+      const info = createDecodingInfo();
+      mockMediaCapabilities(info);
+      const manifest = createManifest();
+      const streams = await buildStreams(manifest);
+      const video = streams.get(MediaType.VIDEO) ?? [];
+      const audio = streams.get(MediaType.AUDIO) ?? [];
+      expect(video).toHaveLength(1);
+      expect(audio).toHaveLength(1);
+      expect(video[0]![PROP_DECODING_INFO]).toBe(info);
+      expect(audio[0]![PROP_DECODING_INFO]).toBe(info);
     });
   });
 });
