@@ -8,8 +8,11 @@ import {
   pickClosestByBandwidth,
 } from "../../lib/utils/stream_utils";
 import {
+  createAudioSwitchingSet,
+  createAudioTrack,
   createDecodingInfo,
   createManifest,
+  createSubtitleSwitchingSet,
   createVideoSwitchingSet,
   createVideoTrack,
   mockMediaCapabilities,
@@ -320,6 +323,75 @@ describe("StreamUtils", () => {
       expect(streams.get(MediaType.AUDIO) ?? []).toEqual([]);
       // Video must still be present.
       expect((streams.get(MediaType.VIDEO) ?? []).length).toBe(1);
+    });
+
+    it("passes subtitle streams through without probing", async () => {
+      const spy = mockMediaCapabilities();
+      const manifest = createManifest({
+        switchingSets: [
+          createVideoSwitchingSet(),
+          createAudioSwitchingSet(),
+          createSubtitleSwitchingSet(),
+        ],
+      });
+      const streams = await buildStreams(manifest);
+      const subtitles = streams.get(MediaType.SUBTITLE) ?? [];
+      expect(subtitles).toHaveLength(1);
+      // Subtitle stream must not carry PROP_DECODING_INFO.
+      expect(PROP_DECODING_INFO in subtitles[0]!).toBe(false);
+      // Probe called exactly twice — once for video, once for audio.
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it("builds a video MediaDecodingConfiguration with width/height/bitrate", async () => {
+      const spy = mockMediaCapabilities();
+      const manifest = createManifest({
+        switchingSets: [
+          createVideoSwitchingSet({
+            codec: "avc1.64001f",
+            tracks: [
+              createVideoTrack({
+                bandwidth: 2_500_000,
+                width: 1280,
+                height: 720,
+              }),
+            ],
+          }),
+        ],
+      });
+      await buildStreams(manifest);
+      expect(spy).toHaveBeenCalledWith({
+        type: "media-source",
+        video: {
+          contentType: 'video/mp4; codecs="avc1.64001f"',
+          width: 1280,
+          height: 720,
+          bitrate: 2_500_000,
+          framerate: 30,
+        },
+      });
+    });
+
+    it("builds an audio MediaDecodingConfiguration with bitrate/channels/samplerate", async () => {
+      const spy = mockMediaCapabilities();
+      const manifest = createManifest({
+        switchingSets: [
+          createAudioSwitchingSet({
+            codec: "mp4a.40.2",
+            tracks: [createAudioTrack({ bandwidth: 128_000 })],
+          }),
+        ],
+      });
+      await buildStreams(manifest);
+      expect(spy).toHaveBeenCalledWith({
+        type: "media-source",
+        audio: {
+          contentType: 'audio/mp4; codecs="mp4a.40.2"',
+          bitrate: 128_000,
+          channels: "2",
+          samplerate: 48000,
+        },
+      });
     });
   });
 });

@@ -81,6 +81,32 @@ export function createAudioSwitchingSet(
   };
 }
 
+export function createSubtitleTrack(
+  overrides?: Partial<Track<MediaType.SUBTITLE>>,
+): Track<MediaType.SUBTITLE> {
+  return {
+    id: "subtitle-track-1",
+    type: MediaType.SUBTITLE,
+    bandwidth: 1_000,
+    segments: [createSegment()],
+    maxSegmentDuration: 4,
+    ...overrides,
+  };
+}
+
+export function createSubtitleSwitchingSet(
+  overrides?: Partial<SwitchingSet<MediaType.SUBTITLE>>,
+): SwitchingSet<MediaType.SUBTITLE> {
+  return {
+    id: "subtitle:wvtt:unk",
+    type: MediaType.SUBTITLE,
+    codec: "wvtt",
+    language: LANGUAGE_UNKNOWN,
+    tracks: [createSubtitleTrack()],
+    ...overrides,
+  };
+}
+
 export function createManifest(overrides?: Partial<Manifest>): Manifest {
   return {
     start: 0,
