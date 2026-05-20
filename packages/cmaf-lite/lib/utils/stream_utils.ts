@@ -8,15 +8,15 @@ import * as CodecUtils from "./codec_utils";
 export async function buildStreams(
   manifest: Manifest,
 ): Promise<Map<MediaType, Stream[]>> {
-  const projections: Promise<Stream | null>[] = [];
-  for (const ss of manifest.switchingSets) {
-    for (const track of ss.tracks) {
-      projections.push(projectStream(ss, track));
+  const promises: Promise<Stream | null>[] = [];
+  for (const switchingSet of manifest.switchingSets) {
+    for (const track of switchingSet.tracks) {
+      promises.push(buildStream(switchingSet, track));
     }
   }
-  const streams = (await Promise.all(projections)).filter(
-    (s): s is Stream => s !== null,
-  );
+
+  const maybeStreams = await Promise.all(promises);
+  const streams = maybeStreams.filter((s): s is Stream => s !== null);
 
   const result = new Map<MediaType, Stream[]>([
     [MediaType.VIDEO, []],
@@ -28,11 +28,13 @@ export async function buildStreams(
     asserts.assertExists(list, `No list for ${stream.type}`);
     list.push(stream);
   }
+
   // Sorted by bandwidth ascending — index 0 is lowest quality.
   // Required for ABR rules to reason about the quality ladder.
   for (const streams of result.values()) {
     streams.sort((a, b) => a.bandwidth - b.bandwidth);
   }
+
   return result;
 }
 
@@ -75,13 +77,13 @@ function matchesPreference(stream: Stream, preference: Preference): boolean {
   return true;
 }
 
-async function projectStream(
-  ss: SwitchingSet,
+async function buildStream(
+  switchingSet: SwitchingSet,
   track: Track,
 ): Promise<Stream | null> {
-  const codec = CodecUtils.getNormalizedCodec(ss.codec);
-  if (track.type === MediaType.VIDEO && ss.type === MediaType.VIDEO) {
-    const info = await probeTrack(ss.codec, track);
+  const codec = CodecUtils.getNormalizedCodec(switchingSet.codec);
+  if (track.type === MediaType.VIDEO && switchingSet.type === MediaType.VIDEO) {
+    const info = await probeDecodingInfo(switchingSet.codec, track);
     if (!info.supported) {
       return null;
     }
@@ -91,12 +93,12 @@ async function projectStream(
       bandwidth: track.bandwidth,
       width: track.width,
       height: track.height,
-      [PROP_HIERARCHY]: { switchingSet: ss, track },
+      [PROP_HIERARCHY]: { switchingSet, track },
       [PROP_DECODING_INFO]: info,
     };
   }
-  if (track.type === MediaType.AUDIO && ss.type === MediaType.AUDIO) {
-    const info = await probeTrack(ss.codec, track);
+  if (track.type === MediaType.AUDIO && switchingSet.type === MediaType.AUDIO) {
+    const info = await probeDecodingInfo(switchingSet.codec, track);
     if (!info.supported) {
       return null;
     }
@@ -104,29 +106,31 @@ async function projectStream(
       type: MediaType.AUDIO,
       codec,
       bandwidth: track.bandwidth,
-      language: ss.language,
-      [PROP_HIERARCHY]: { switchingSet: ss, track },
+      language: switchingSet.language,
+      [PROP_HIERARCHY]: { switchingSet, track },
       [PROP_DECODING_INFO]: info,
     };
   }
-  if (track.type === MediaType.SUBTITLE && ss.type === MediaType.SUBTITLE) {
+  if (
+    track.type === MediaType.SUBTITLE &&
+    switchingSet.type === MediaType.SUBTITLE
+  ) {
     return {
       type: MediaType.SUBTITLE,
       codec,
       bandwidth: track.bandwidth,
-      [PROP_HIERARCHY]: { switchingSet: ss, track },
+      [PROP_HIERARCHY]: { switchingSet, track },
     };
   }
   throw new Error(`Failed to map track for type ${track.type}`);
 }
 
-async function probeTrack(
+async function probeDecodingInfo(
   codec: string,
   track: Track,
 ): Promise<MediaCapabilitiesDecodingInfo> {
-  let config: MediaDecodingConfiguration;
   if (track.type === MediaType.VIDEO) {
-    config = {
+    return navigator.mediaCapabilities.decodingInfo({
       type: "media-source",
       video: {
         contentType: `video/mp4; codecs="${codec}"`,
@@ -135,9 +139,10 @@ async function probeTrack(
         bitrate: track.bandwidth,
         framerate: 30,
       },
-    };
-  } else if (track.type === MediaType.AUDIO) {
-    config = {
+    });
+  }
+  if (track.type === MediaType.AUDIO) {
+    return navigator.mediaCapabilities.decodingInfo({
       type: "media-source",
       audio: {
         contentType: `audio/mp4; codecs="${codec}"`,
@@ -145,11 +150,9 @@ async function probeTrack(
         channels: "2",
         samplerate: 48000,
       },
-    };
-  } else {
-    throw new Error(`Cannot probe track of type ${track.type}`);
+    });
   }
-  return navigator.mediaCapabilities.decodingInfo(config);
+  throw new Error(`Cannot probe track of type ${track.type}`);
 }
 
 export function pickClosestByBandwidth(
