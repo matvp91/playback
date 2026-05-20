@@ -30,10 +30,10 @@ player.load(
   // "https://livesim2.dashif.org/livesim2/segtimeline_1/testpic_2s/Manifest.mpd",
   // "https://dash.akamaized.net/dash264/TestCasesIOP33/adapatationSetSwitching/1/manifest.mpd",
   // "https://dash.akamaized.net/dash264/TestCasesHEVC/2a/12/tos_ondemand_multires_10bit_hev.mpd"
-  // "https://divudqsyr5kmn.cloudfront.net/cmaf/bbb-avc-av1/bbb_sunflower_2160p_30fps.mpd",
+  "https://divudqsyr5kmn.cloudfront.net/cmaf/bbb-avc-av1/bbb_sunflower_2160p_30fps.mpd",
   // "https://livesim2.dashif.org/livesim2/segtimeline_1/testpic_2s/Manifest.mpd",
   // "https://demo.unified-streaming.com/k8s/live/scte35.isml/.mpd"
-  "https://media.axprod.net/TestVectors/v7-MultiDRM-MultiKey/Manifest.mpd"
+  // "https://media.axprod.net/TestVectors/v7-MultiDRM-MultiKey/Manifest.mpd"
 );
 
 // biome-ignore lint/style/noNonNullAssertion: We definitely got this
