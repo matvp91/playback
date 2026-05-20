@@ -1,13 +1,15 @@
 import { vi } from "vitest";
+import type { DrmConfig } from "../../lib/config";
 import type {
   InitSegment,
   Manifest,
+  Protection,
   Segment,
   SwitchingSet,
   Track,
 } from "../../lib/types/manifest";
 import { LANGUAGE_UNKNOWN } from "../../lib/types/manifest";
-import { MediaType } from "../../lib/types/media";
+import { KeySystem, MediaType } from "../../lib/types/media";
 
 export function createInitSegment(
   overrides?: Partial<InitSegment>,
@@ -153,3 +155,32 @@ export function mockMediaCapabilities(
     .spyOn(nav.mediaCapabilities!, "decodingInfo")
     .mockResolvedValue(info);
 }
+
+export function createProtection(overrides?: Partial<Protection>): Protection {
+  return {
+    scheme: "cenc",
+    defaultKid: "abcdef01-2345-6789-abcd-ef0123456789",
+    keySystems: {
+      [KeySystem.WIDEVINE]: { pssh: new Uint8Array([1, 2, 3, 4]) },
+    },
+    ...overrides,
+  };
+}
+
+export function createKeySystemAccess(keySystem: string): MediaKeySystemAccess {
+  return {
+    keySystem,
+    getConfiguration: () => ({}) as MediaKeySystemConfiguration,
+    createMediaKeys: async () => ({}) as MediaKeys,
+  } as MediaKeySystemAccess;
+}
+
+export const DEFAULT_DRM_CONFIG: DrmConfig = {
+  preferredKeySystems: [
+    KeySystem.FAIRPLAY,
+    KeySystem.WIDEVINE,
+    KeySystem.PLAYREADY,
+  ],
+  licenseUrls: {},
+  serverCertificates: {},
+};

@@ -1,17 +1,28 @@
-import { PROP_DECODING_INFO, PROP_HIERARCHY } from "../constants";
+import type { DrmConfig } from "../config";
+import {
+  PROP_DECODING_INFO,
+  PROP_HIERARCHY,
+  PROP_KEY_SYSTEM_ACCESS,
+} from "../constants";
 import type { Manifest, SwitchingSet, Track } from "../types/manifest";
-import type { Preference, Stream } from "../types/media";
-import { MediaType } from "../types/media";
+import type {
+  AudioStream,
+  Preference,
+  Stream,
+  VideoStream,
+} from "../types/media";
+import { KeySystem, MediaType } from "../types/media";
 import * as asserts from "./asserts";
 import * as CodecUtils from "./codec_utils";
 
 export async function buildStreams(
   manifest: Manifest,
+  drm: DrmConfig,
 ): Promise<Map<MediaType, Stream[]>> {
   const promises: Promise<Stream | null>[] = [];
   for (const switchingSet of manifest.switchingSets) {
     for (const track of switchingSet.tracks) {
-      promises.push(buildStream(switchingSet, track));
+      promises.push(buildStream(switchingSet, track, drm));
     }
   }
 
@@ -80,36 +91,55 @@ function matchesPreference(stream: Stream, preference: Preference): boolean {
 async function buildStream(
   switchingSet: SwitchingSet,
   track: Track,
+  drm: DrmConfig,
 ): Promise<Stream | null> {
   const codec = CodecUtils.getNormalizedCodec(switchingSet.codec);
   if (track.type === MediaType.VIDEO && switchingSet.type === MediaType.VIDEO) {
-    const info = await probeDecodingInfo(switchingSet.codec, track);
-    if (!info.supported) {
+    const probe = await probeDecodingInfo(
+      switchingSet.codec,
+      track,
+      switchingSet,
+      drm,
+    );
+    if (!probe.info.supported) {
       return null;
     }
-    return {
+    const stream: VideoStream = {
       type: MediaType.VIDEO,
       codec,
       bandwidth: track.bandwidth,
       width: track.width,
       height: track.height,
       [PROP_HIERARCHY]: { switchingSet, track },
-      [PROP_DECODING_INFO]: info,
+      [PROP_DECODING_INFO]: probe.info,
     };
+    if (probe.keySystemAccess) {
+      stream[PROP_KEY_SYSTEM_ACCESS] = probe.keySystemAccess;
+    }
+    return stream;
   }
   if (track.type === MediaType.AUDIO && switchingSet.type === MediaType.AUDIO) {
-    const info = await probeDecodingInfo(switchingSet.codec, track);
-    if (!info.supported) {
+    const probe = await probeDecodingInfo(
+      switchingSet.codec,
+      track,
+      switchingSet,
+      drm,
+    );
+    if (!probe.info.supported) {
       return null;
     }
-    return {
+    const stream: AudioStream = {
       type: MediaType.AUDIO,
       codec,
       bandwidth: track.bandwidth,
       language: switchingSet.language,
       [PROP_HIERARCHY]: { switchingSet, track },
-      [PROP_DECODING_INFO]: info,
+      [PROP_DECODING_INFO]: probe.info,
     };
+    if (probe.keySystemAccess) {
+      stream[PROP_KEY_SYSTEM_ACCESS] = probe.keySystemAccess;
+    }
+    return stream;
   }
   if (
     track.type === MediaType.SUBTITLE &&
@@ -125,34 +155,126 @@ async function buildStream(
   throw new Error(`Failed to map track for type ${track.type}`);
 }
 
+type DecodingProbe = {
+  info: MediaCapabilitiesDecodingInfo;
+  keySystemAccess?: MediaKeySystemAccess;
+};
+
 async function probeDecodingInfo(
   codec: string,
   track: Track,
-): Promise<MediaCapabilitiesDecodingInfo> {
+  switchingSet: SwitchingSet,
+  drm: DrmConfig,
+): Promise<DecodingProbe> {
+  const candidates = candidateKeySystems(switchingSet, drm);
+  if (candidates.length === 0) {
+    const info = await probeOnce(codec, track, undefined);
+    return { info };
+  }
+  for (const keySystem of candidates) {
+    const config = buildKeySystemConfig(keySystem, switchingSet, track);
+    const info = await probeOnce(codec, track, config);
+    if (info.supported) {
+      return { info, keySystemAccess: info.keySystemAccess ?? undefined };
+    }
+  }
+  return {
+    info: {
+      supported: false,
+      smooth: false,
+      powerEfficient: false,
+      keySystemAccess: null,
+    },
+  };
+}
+
+function candidateKeySystems(
+  switchingSet: SwitchingSet,
+  drm: DrmConfig,
+): KeySystem[] {
+  if (!switchingSet.protection) {
+    return [];
+  }
+  const present = switchingSet.protection.keySystems;
+  return drm.preferredKeySystems.filter((ks) => present[ks] !== undefined);
+}
+
+type KeySystemProbeConfig = MediaKeySystemConfiguration & {
+  keySystem: string;
+};
+
+function buildKeySystemConfig(
+  keySystem: KeySystem,
+  switchingSet: SwitchingSet,
+  track: Track,
+): KeySystemProbeConfig {
+  const contentType =
+    track.type === MediaType.VIDEO
+      ? `video/mp4; codecs="${switchingSet.codec}"`
+      : `audio/mp4; codecs="${switchingSet.codec}"`;
+  const cap: MediaKeySystemMediaCapability = {
+    contentType,
+    robustness: defaultRobustness(keySystem),
+  };
+  const config: KeySystemProbeConfig = {
+    keySystem,
+    initDataTypes: ["cenc"],
+    distinctiveIdentifier: "optional",
+    persistentState: "optional",
+    sessionTypes: ["temporary"],
+  };
   if (track.type === MediaType.VIDEO) {
-    return navigator.mediaCapabilities.decodingInfo({
-      type: "media-source",
-      video: {
-        contentType: `video/mp4; codecs="${codec}"`,
-        width: track.width,
-        height: track.height,
-        bitrate: track.bandwidth,
-        framerate: 30,
-      },
-    });
+    config.videoCapabilities = [cap];
+  } else {
+    config.audioCapabilities = [cap];
   }
-  if (track.type === MediaType.AUDIO) {
-    return navigator.mediaCapabilities.decodingInfo({
-      type: "media-source",
-      audio: {
-        contentType: `audio/mp4; codecs="${codec}"`,
-        bitrate: track.bandwidth,
-        channels: "2",
-        samplerate: 48000,
-      },
-    });
+  return config;
+}
+
+function defaultRobustness(keySystem: KeySystem): string {
+  if (keySystem === KeySystem.WIDEVINE) {
+    return "SW_SECURE_CRYPTO";
   }
-  throw new Error(`Cannot probe track of type ${track.type}`);
+  if (keySystem === KeySystem.PLAYREADY) {
+    return "150";
+  }
+  return "";
+}
+
+async function probeOnce(
+  codec: string,
+  track: Track,
+  keySystemConfiguration: KeySystemProbeConfig | undefined,
+): Promise<MediaCapabilitiesDecodingInfo> {
+  const base: MediaDecodingConfiguration =
+    track.type === MediaType.VIDEO
+      ? {
+          type: "media-source",
+          video: {
+            contentType: `video/mp4; codecs="${codec}"`,
+            width: track.width,
+            height: track.height,
+            bitrate: track.bandwidth,
+            framerate: 30,
+          },
+        }
+      : {
+          type: "media-source",
+          audio: {
+            contentType: `audio/mp4; codecs="${codec}"`,
+            bitrate: track.bandwidth,
+            channels: "2",
+            samplerate: 48000,
+          },
+        };
+  if (keySystemConfiguration) {
+    (
+      base as MediaDecodingConfiguration & {
+        keySystemConfiguration: KeySystemProbeConfig;
+      }
+    ).keySystemConfiguration = keySystemConfiguration;
+  }
+  return navigator.mediaCapabilities.decodingInfo(base);
 }
 
 export function pickClosestByBandwidth(
