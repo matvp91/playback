@@ -37,8 +37,8 @@ export class StreamController {
   private isLive_ = false;
   private rangeStart_ = 0;
   private rangeEnd_ = 0;
-  private streamsMap_ = new Map<MediaType, Stream[]>();
-  private streams_ = new Map<MediaType, Stream>();
+  private streams_ = new Map<MediaType, Stream[]>();
+  private activeStream_ = new Map<MediaType, Stream>();
   private media_: HTMLMediaElement | null = null;
   private mediaStates_ = new Map<MediaType, MediaState>();
 
@@ -51,12 +51,12 @@ export class StreamController {
   }
 
   getStreams<T extends MediaType>(type: T) {
-    const list = this.streamsMap_.get(type);
+    const list = this.streams_.get(type);
     return list as Stream<T>[] | null;
   }
 
-  getStream<T extends MediaType>(type: T) {
-    const stream = this.streams_.get(type);
+  getActiveStream<T extends MediaType>(type: T) {
+    const stream = this.activeStream_.get(type);
     return stream as Stream<T> | null;
   }
 
@@ -88,8 +88,8 @@ export class StreamController {
 
     if (!event.isUpdate) {
       // The initial manifest can be processed.
-      this.streamsMap_ = StreamUtils.buildStreams(event.manifest);
-      log.info("Streams", this.streamsMap_);
+      this.streams_ = StreamUtils.buildStreams(event.manifest);
+      log.info("Streams", this.streams_);
       this.player_.emit(Events.STREAMS_CREATED);
       this.tryStart_();
     }
@@ -115,11 +115,14 @@ export class StreamController {
 
   private switchStream_(stream: Stream) {
     const { type } = stream;
-    const oldStream = this.streams_.get(type) ?? null;
+    const oldStream = this.getActiveStream(type);
     if (oldStream === stream) {
       return;
     }
-    this.streams_.set(type, stream);
+
+    // Update the active stream before we execute the actual switch,
+    // we're allowed to change streams before having a mediaState.
+    this.activeStream_.set(type, stream);
 
     const mediaState = this.mediaStates_.get(type);
     if (!mediaState) {
@@ -183,7 +186,7 @@ export class StreamController {
       streams,
       preferences,
     );
-    const activeStream = this.streams_.get(type);
+    const activeStream = this.getActiveStream(type);
     if (matches[0]) {
       if (activeStream) {
         // If we have an active stream already (ABR might have set one), we can
@@ -210,7 +213,7 @@ export class StreamController {
       return;
     }
 
-    for (const [type, streams] of this.streamsMap_) {
+    for (const [type, streams] of this.streams_) {
       if (type === MediaType.SUBTITLE) {
         // We can't do anything with SUBTITLE here, but we shall not
         // include it in our streamsMap to begin with.
@@ -219,7 +222,7 @@ export class StreamController {
         continue;
       }
       const stream = this.resolveStream_(type, streams);
-      this.streams_.set(type, stream);
+      this.activeStream_.set(type, stream);
       log.info("Initial", type, stream);
 
       const mediaState: MediaState = {
@@ -261,7 +264,7 @@ export class StreamController {
    * via sequential index or time-based lookup.
    */
   private update_(mediaState: MediaState) {
-    const stream = this.streams_.get(mediaState.type);
+    const stream = this.getActiveStream(mediaState.type);
     asserts.assertExists(stream, `No stream for ${mediaState.type}`);
 
     if (mediaState.ended || mediaState.request?.inFlight) {
