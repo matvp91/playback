@@ -92,47 +92,53 @@ internal back-channel for controllers (ABR in particular).
 
 ### Stream projection
 
-`projectStream` gains an optional third parameter:
+`projectStream` becomes async and owns the probe decision per
+track type. It returns `Stream | null` — `null` when the track is
+unplayable:
 
 ```ts
-function projectStream(
+async function projectStream(
   ss: SwitchingSet,
   track: Track,
-  info?: MediaCapabilitiesDecodingInfo,
-): Stream
+): Promise<Stream | null>
 ```
 
-The video and audio branches attach `info` to the literal directly
-(no placeholder, no cast). The subtitle branch ignores it.
-`projectStream` asserts `info` is present in the video/audio
-branches so the type stays honest at the symbol assignment site.
+The video and audio branches call `probeTrack(codec, track)`. If
+it returns `null`, `projectStream` returns `null`. Otherwise the
+returned `info` is attached to the constructed stream via
+`PROP_DECODING_INFO`. The subtitle branch never probes and returns
+the stream directly.
 
-`buildStreams` calls `projectStream(ss, track, info)` after the
-probe resolves, so the assertion always holds by construction.
+### `probeTrack`
+
+```ts
+async function probeTrack(
+  codec: string,
+  track: Track,
+): Promise<MediaCapabilitiesDecodingInfo | null>
+```
+
+Switches on `track.type` to build either a video or audio
+`MediaDecodingConfiguration`, calls
+`navigator.mediaCapabilities.decodingInfo`, and returns the result
+when `supported === true`; otherwise `null`. Throws on subtitle —
+calling it with a non-probeable type is a programmer error, not a
+runtime "unsupported" condition.
 
 ### `buildStreams` flow
 
 ```
 async function buildStreams(manifest):
-  candidates = []           # { ss, track, type } tuples
-  subtitleStreams = []      # passed through untouched
-
+  projections = []
   for ss in manifest.switchingSets:
     for track in ss.tracks:
-      if track.type == SUBTITLE:
-        subtitleStreams.push(projectSubtitle(ss, track))
-      else:
-        candidates.push({ ss, track })
+      projections.push(projectStream(ss, track))
 
-  decodingInfos = await Promise.all(
-    candidates.map(c => probe(c.ss, c.track))
-  )
+  streams = (await Promise.all(projections))
+    .filter(s => s !== null)
 
-  result = { VIDEO: [], AUDIO: [], SUBTITLE: subtitleStreams }
-  for (candidate, info) in zip(candidates, decodingInfos):
-    if !info.supported: continue
-    stream = projectStream(candidate.ss, candidate.track)
-    stream[PROP_DECODING_INFO] = info
+  result = { VIDEO: [], AUDIO: [], SUBTITLE: [] }
+  for stream in streams:
     result[stream.type].push(stream)
 
   sort each list by bandwidth ascending
@@ -143,26 +149,12 @@ If, after filtering, a media type ends up with zero streams, the
 list is simply empty. No error is raised here — surfacing
 "manifest entirely unplayable" is deferred to a later iteration.
 
-### Probe cache
+### No caching
 
-A module-level `WeakMap<Track, Promise<MediaCapabilitiesDecodingInfo>>`
-in `stream_utils.ts`. `Track` is the natural key: it's stable
-across live manifest updates (the parser updates tracks in place,
-per the manifest-apply work) and a single `Track` corresponds to a
-single probe input (its `bandwidth`, `width`, `height`, plus the
-parent `SwitchingSet.codec`).
-
-Caching the `Promise` (not the resolved value) deduplicates
-concurrent probes. Entries are reclaimed automatically when a
-`Track` is dropped from the manifest and becomes unreachable, so
-no explicit invalidation, no module-lifetime concerns, no
-test-only reset helper.
-
-Two distinct Tracks with identical probe inputs each get their own
-probe — wasted call, not a correctness issue, and manifests don't
-duplicate representations like that in practice.
-
-No invalidation. Device capabilities don't change within a session.
+`buildStreams` runs once per presentation. `StreamController`
+calls it only on the initial manifest (`!isUpdate`); live refreshes
+mutate the manifest in place and reuse the existing `Stream[]`.
+There's no second call to deduplicate against, so no cache.
 
 ### Building the configuration
 
@@ -237,7 +229,7 @@ Extend `test/utils/stream_utils.test.ts`:
 - `lib/types/media.ts` — add the symbol to `VideoStream` and
   `AudioStream` interfaces.
 - `lib/utils/stream_utils.ts` — `buildStreams` becomes async; add
-  internal `probe` helper and module-level cache.
+  internal `probe` helper.
 - `lib/media/stream_controller.ts` — `await` `buildStreams` in
   `onManifestUpdated_`.
 - `test/utils/stream_utils.test.ts` — extend with capability cases.
@@ -257,9 +249,3 @@ Extend `test/utils/stream_utils.test.ts`:
 - **Spec defaults (framerate/channels/samplerate):** wrong values
   could cause `supported: false` on permissive browsers. Use the
   common-case defaults above; revisit when ABR consumes `smooth`.
-- **Cache scoping:** the `WeakMap<Track, …>` is module-scoped, so
-  it spans all players in the same JS realm. That's desirable —
-  capabilities don't change in a session — and the WeakMap reclaims
-  entries automatically as tracks become unreachable. Tests that
-  need cache isolation construct fresh `Track` objects via
-  factories rather than reaching into the cache.
