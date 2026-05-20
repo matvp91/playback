@@ -1,4 +1,4 @@
-import type { MediaType } from "./media";
+import type { KeySystem, MediaType } from "./media";
 
 /**
  * Unknown language.
@@ -6,6 +6,37 @@ import type { MediaType } from "./media";
  * @public
  */
 export const LANGUAGE_UNKNOWN = "unk";
+
+/**
+ * Encryption metadata for a switching set, derived from DASH
+ * `<ContentProtection>` elements.
+ *
+ * @public
+ */
+export interface Protection {
+  /** Encryption scheme — AES-CTR (`cenc`) or AES-CBC subsample (`cbcs`). */
+  scheme: "cenc" | "cbcs";
+  /** Default Key ID, lowercased dashed UUID, from `cenc:default_KID`. */
+  defaultKid: string;
+  /**
+   * Per-key-system init material. Empty when the manifest only carries
+   * the generic `mp4protection` element without any key-system entry.
+   */
+  keySystems: Partial<Record<KeySystem, KeySystemInfo>>;
+}
+
+/**
+ * Per-key-system init material parsed from a DASH `<ContentProtection>`
+ * element.
+ *
+ * @public
+ */
+export interface KeySystemInfo {
+  /** CENC PSSH blob (Widevine, PlayReady). */
+  pssh?: Uint8Array;
+  /** FairPlay content identifier (from `skd://...`). */
+  contentId?: string;
+}
 
 /**
  * Parsed manifest representing a CMAF presentation.
@@ -34,6 +65,7 @@ export interface BaseSwitchingSet {
   id: string;
   /** Codec string. */
   codec: string;
+  protection?: Protection;
 }
 
 /**
