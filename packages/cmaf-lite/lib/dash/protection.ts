@@ -14,10 +14,17 @@ const KEY_SYSTEM_BY_UUID: Record<string, KeySystem> = {
 /**
  * Reads all `<ContentProtection>` elements on an AdaptationSet
  * and returns a `Protection` model, or `null` when no protection
- * is signalled.
+ * is signalled. Falls back to the first Representation when the
+ * AdaptationSet carries no ContentProtection children directly.
  */
-export function readProtection(adaptationSet: txml.TNode): Protection | null {
-  const elements = XmlUtils.children(adaptationSet, "ContentProtection");
+export function readProtection(
+  adaptationSet: txml.TNode,
+  representations: txml.TNode[],
+): Protection | null {
+  let elements = XmlUtils.children(adaptationSet, "ContentProtection");
+  if (elements.length === 0 && representations[0]) {
+    elements = XmlUtils.children(representations[0], "ContentProtection");
+  }
   if (elements.length === 0) {
     return null;
   }

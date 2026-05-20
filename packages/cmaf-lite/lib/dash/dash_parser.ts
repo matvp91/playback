@@ -237,7 +237,7 @@ function parseAdaptationSet(
 ): SwitchingSet {
   const type = DashHelpers.resolveType(adaptationSet, representations);
   const codec = DashHelpers.resolveCodec(adaptationSet, representations);
-  const protection = readProtection(adaptationSet);
+  const protection = readProtection(adaptationSet, representations);
 
   if (type === MediaType.VIDEO) {
     return {

@@ -589,6 +589,18 @@ describe("DashParser", () => {
       );
       expect(findVideo(manifest).protection).toBeUndefined();
     });
+
+    it("parses ContentProtection located on Representation elements", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-protected-representation-level.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.protection?.scheme).toBe("cenc");
+      expect(
+        video.protection?.keySystems[KeySystem.WIDEVINE]?.pssh,
+      ).toBeInstanceOf(Uint8Array);
+    });
   });
 
   describe("update — live reconciliation", () => {
