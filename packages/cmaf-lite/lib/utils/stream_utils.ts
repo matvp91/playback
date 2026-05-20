@@ -81,7 +81,7 @@ async function projectStream(
 ): Promise<Stream | null> {
   const codec = CodecUtils.getNormalizedCodec(ss.codec);
   if (track.type === MediaType.VIDEO && ss.type === MediaType.VIDEO) {
-    const info = await probeTrack(codec, track);
+    const info = await probeTrack(ss.codec, track);
     if (!info.supported) {
       return null;
     }
@@ -96,7 +96,7 @@ async function projectStream(
     };
   }
   if (track.type === MediaType.AUDIO && ss.type === MediaType.AUDIO) {
-    const info = await probeTrack(codec, track);
+    const info = await probeTrack(ss.codec, track);
     if (!info.supported) {
       return null;
     }
