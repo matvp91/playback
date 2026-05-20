@@ -1,12 +1,6 @@
 import type { KeySystemInfo } from "../types/manifest";
 import { KeySystem } from "../types/media";
 
-/**
- * DASH scheme URN for the mp4protection element that carries scheme
- * and default_KID.
- */
-export const MP4_PROTECTION_SCHEME = "urn:mpeg:dash:mp4protection:2011";
-
 const KEY_SYSTEM_BY_UUID: Record<string, KeySystem> = {
   "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed": KeySystem.WIDEVINE,
   "9a04f079-9840-4286-ab92-e65be0885f95": KeySystem.PLAYREADY,

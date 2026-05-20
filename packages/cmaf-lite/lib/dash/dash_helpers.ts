@@ -2,7 +2,6 @@ import type * as txml from "txml";
 import {
   keySystemFromSchemeIdUri,
   keySystemInfoFromRaw,
-  MP4_PROTECTION_SCHEME,
 } from "../drm/drm_utils";
 import type {
   KeySystemInfo,
@@ -189,7 +188,9 @@ export function resolveProtection(
       continue;
     }
 
-    if (schemeIdUri === MP4_PROTECTION_SCHEME) {
+    // DASH scheme URN for the mp4protection element that carries scheme
+    // and default_KID.
+    if (schemeIdUri === "urn:mpeg:dash:mp4protection:2011") {
       const value = XmlUtils.attr(el, "value", XmlUtils.parseString);
       if (value === "cenc" || value === "cbcs") {
         scheme = value;
