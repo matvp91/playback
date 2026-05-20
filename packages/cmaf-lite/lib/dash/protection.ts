@@ -69,7 +69,7 @@ export function readProtection(adaptationSet: txml.TNode): Protection | null {
 
 function extractUuid(schemeIdUri: string): string | null {
   const match = /^urn:uuid:([0-9a-f-]+)$/i.exec(schemeIdUri);
-  return match ? match[1]!.toLowerCase() : null;
+  return match ? (match[1]?.toLowerCase() ?? null) : null;
 }
 
 function readKeySystemInfo(

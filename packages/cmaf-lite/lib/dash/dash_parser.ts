@@ -9,6 +9,7 @@ import * as ManifestUtils from "../utils/manifest_utils";
 import * as UrlUtils from "../utils/url_utils";
 import * as XmlUtils from "../utils/xml_utils";
 import * as DashHelpers from "./dash_helpers";
+import { readProtection } from "./protection";
 
 type ReadContext = {
   manifest: Manifest;
@@ -236,12 +237,14 @@ function parseAdaptationSet(
 ): SwitchingSet {
   const type = DashHelpers.resolveType(adaptationSet, representations);
   const codec = DashHelpers.resolveCodec(adaptationSet, representations);
+  const protection = readProtection(adaptationSet);
 
   if (type === MediaType.VIDEO) {
     return {
       id,
       type,
       codec,
+      ...(protection ? { protection } : {}),
       tracks: [],
     };
   }
@@ -252,6 +255,7 @@ function parseAdaptationSet(
       type,
       codec,
       language,
+      ...(protection ? { protection } : {}),
       tracks: [],
     };
   }
@@ -262,6 +266,7 @@ function parseAdaptationSet(
       type,
       codec,
       language,
+      ...(protection ? { protection } : {}),
       tracks: [],
     };
   }

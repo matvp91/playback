@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as DashParser from "../../lib/dash/dash_parser";
-import { MediaType } from "../../lib/types/media";
+import { KeySystem, MediaType } from "../../lib/types/media";
 import { loadFixture } from "../fixtures";
 import { findAudio, findSubtitle, findVideo } from "./helpers";
 
@@ -563,6 +563,31 @@ describe("DashParser", () => {
       expect(track.segments[1]).toBe(snapshot[2]);
       expect(track.segments[2]).toBe(snapshot[3]);
       expect(track.segments[3]).toBe(snapshot[4]);
+    });
+  });
+
+  describe("ContentProtection", () => {
+    it("attaches a protection model to the switching set when present", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-protected-widevine-playready.mpd"),
+        sourceUrl,
+      );
+      const video = findVideo(manifest);
+      expect(video.protection?.scheme).toBe("cenc");
+      expect(video.protection?.defaultKid).toBe(
+        "abcdef01-2345-6789-abcd-ef0123456789",
+      );
+      expect(
+        video.protection?.keySystems[KeySystem.WIDEVINE]?.pssh,
+      ).toBeInstanceOf(Uint8Array);
+    });
+
+    it("leaves protection undefined on clear switching sets", () => {
+      const manifest = DashParser.create(
+        loadFixture("dash-parser/vod-basic.mpd"),
+        sourceUrl,
+      );
+      expect(findVideo(manifest).protection).toBeUndefined();
     });
   });
 
