@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROP_DECODING_INFO, PROP_HIERARCHY } from "../../lib/constants";
-import type { Preference, VideoStream } from "../../lib/types/media";
+import type { AudioStream, Preference, VideoStream } from "../../lib/types/media";
 import { MediaType } from "../../lib/types/media";
 import {
   buildStreams,
@@ -248,8 +248,8 @@ describe("StreamUtils", () => {
       const audio = streams.get(MediaType.AUDIO) ?? [];
       expect(video).toHaveLength(1);
       expect(audio).toHaveLength(1);
-      expect(video[0]![PROP_DECODING_INFO]).toBe(info);
-      expect(audio[0]![PROP_DECODING_INFO]).toBe(info);
+      expect((video[0] as VideoStream)![PROP_DECODING_INFO]).toBe(info);
+      expect((audio[0] as AudioStream)![PROP_DECODING_INFO]).toBe(info);
     });
 
     it("drops unsupported tracks but keeps supported siblings in the same switching set", async () => {
@@ -273,6 +273,32 @@ describe("StreamUtils", () => {
       const video = streams.get(MediaType.VIDEO) ?? [];
       expect(video).toHaveLength(1);
       expect(video[0]!.bandwidth).toBe(500_000);
+    });
+
+    it("excludes an entirely-unsupported switching set without affecting others", async () => {
+      const manifest = createManifest({
+        switchingSets: [
+          createVideoSwitchingSet({
+            id: "video:supported",
+            codec: "avc1.64001f",
+            tracks: [createVideoTrack({ bandwidth: 1_000_000 })],
+          }),
+          createVideoSwitchingSet({
+            id: "video:unsupported",
+            codec: "av01.0.05M.08",
+            tracks: [createVideoTrack({ bandwidth: 2_000_000 })],
+          }),
+        ],
+      });
+      const spy = mockMediaCapabilities();
+      spy.mockImplementation(async (config: MediaDecodingConfiguration) => {
+        const codecs = config.video?.contentType ?? "";
+        return createDecodingInfo({ supported: codecs.includes("avc1") });
+      });
+      const streams = await buildStreams(manifest);
+      const video = streams.get(MediaType.VIDEO) ?? [];
+      expect(video).toHaveLength(1);
+      expect(video[0]!.codec).toBe("avc");
     });
   });
 });
