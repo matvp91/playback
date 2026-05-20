@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import type {
   InitSegment,
   Manifest,
@@ -88,4 +89,37 @@ export function createManifest(overrides?: Partial<Manifest>): Manifest {
     switchingSets: [createVideoSwitchingSet(), createAudioSwitchingSet()],
     ...overrides,
   };
+}
+
+export function createDecodingInfo(
+  overrides?: Partial<MediaCapabilitiesDecodingInfo>,
+): MediaCapabilitiesDecodingInfo {
+  return {
+    supported: true,
+    smooth: true,
+    powerEfficient: true,
+    keySystemAccess: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Installs a stub for `navigator.mediaCapabilities.decodingInfo`
+ * that returns `info` for every probe. Returns the spy so callers
+ * can inspect call count / arguments. Caller is responsible for
+ * restoring with `vi.restoreAllMocks()` (or per-test cleanup).
+ */
+export function mockMediaCapabilities(
+  info: MediaCapabilitiesDecodingInfo = createDecodingInfo(),
+) {
+  // happy-dom doesn't ship `navigator.mediaCapabilities` by default.
+  // Define it lazily so we can vi.spyOn it.
+  const nav = navigator as Navigator & { mediaCapabilities?: MediaCapabilities };
+  if (!nav.mediaCapabilities) {
+    Object.defineProperty(nav, "mediaCapabilities", {
+      configurable: true,
+      value: { decodingInfo: async () => info },
+    });
+  }
+  return vi.spyOn(nav.mediaCapabilities!, "decodingInfo").mockResolvedValue(info);
 }
