@@ -276,7 +276,7 @@ onKeyStatusesChange(event):
   emit KEY_STATUSES_CHANGED { sessionId: session.sessionId, statuses }
   for status of statuses.values():
     if status === "internal-error" || status === "output-restricted":
-      emit ERROR { code: EME_FATAL_KEY_STATUS, ... }
+      emit ERROR { ... }
 
 on MEDIA_DETACHING or destroy:
   for session of activeSessions: await session.close()
@@ -360,8 +360,7 @@ NetworkService pattern already covers it.
 
 ## Errors
 
-EmeController emits the existing player `ERROR` event with new codes
-under an `EME_*` namespace, surfaced on:
+EmeController emits the existing player `ERROR` event, surfaced on:
 
 - No key system supported for a protected presentation
   (capability probe returns no supported result for any stream).
@@ -413,8 +412,7 @@ this codebase today. Other layers are tested:
 - `lib/media/eme_controller.ts` — new controller.
 - `lib/player.ts` — instantiate `EmeController` alongside the
   existing controllers.
-- `lib/events.ts` — `KEY_SESSION_CREATED`, `KEY_STATUSES_CHANGED`,
-  EME error codes.
+- `lib/events.ts` — `KEY_SESSION_CREATED`, `KEY_STATUSES_CHANGED`.
 - `packages/demo/` — DRM playback section.
 
 ## Open questions
