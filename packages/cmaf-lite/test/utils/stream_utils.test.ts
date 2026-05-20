@@ -251,5 +251,28 @@ describe("StreamUtils", () => {
       expect(video[0]![PROP_DECODING_INFO]).toBe(info);
       expect(audio[0]![PROP_DECODING_INFO]).toBe(info);
     });
+
+    it("drops unsupported tracks but keeps supported siblings in the same switching set", async () => {
+      const manifest = createManifest({
+        switchingSets: [
+          createVideoSwitchingSet({
+            tracks: [
+              createVideoTrack({ bandwidth: 500_000, width: 640, height: 360 }),
+              createVideoTrack({ bandwidth: 5_000_000, width: 3840, height: 2160 }),
+            ],
+          }),
+        ],
+      });
+      // First track supported, second unsupported (by bitrate).
+      const spy = mockMediaCapabilities();
+      spy.mockImplementation(async (config: MediaDecodingConfiguration) => {
+        const bitrate = config.video?.bitrate ?? 0;
+        return createDecodingInfo({ supported: bitrate < 1_000_000 });
+      });
+      const streams = await buildStreams(manifest);
+      const video = streams.get(MediaType.VIDEO) ?? [];
+      expect(video).toHaveLength(1);
+      expect(video[0]!.bandwidth).toBe(500_000);
+    });
   });
 });
