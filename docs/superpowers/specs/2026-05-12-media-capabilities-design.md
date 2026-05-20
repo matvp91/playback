@@ -139,16 +139,9 @@ async function buildStreams(manifest):
   return result
 ```
 
-If, after filtering, `result[VIDEO]` or `result[AUDIO]` is empty
-**and** the corresponding media type existed in the manifest, throw
-a `ManifestUnsupportedError` (new typed error in
-`lib/utils/errors.ts` or wherever the existing typed errors live —
-to be confirmed during impl). `StreamController` surfaces it via
-the existing error path.
-
-If the manifest legitimately has no video (audio-only) or no audio
-streams, that's not an error — only an empty *after filtering*
-non-empty input is.
+If, after filtering, a media type ends up with zero streams, the
+list is simply empty. No error is raised here — surfacing
+"manifest entirely unplayable" is deferred to a later iteration.
 
 ### Probe cache
 
@@ -212,20 +205,17 @@ determination, which is all this iteration consumes. Surfacing
 real values is tracked as follow-up when ABR starts reading
 `smooth`.
 
-### Browsers without `mediaCapabilities`
+### Browser support
 
-The probe falls back to
-`MediaSource.isTypeSupported(getContentType(...))` per stream and
-synthesises a minimal `MediaCapabilitiesDecodingInfo`
-(`{ supported, smooth: false, powerEfficient: false }`). Encoded
-once inside the probe function; consumers don't need to know.
+`navigator.mediaCapabilities.decodingInfo` is assumed available.
+All evergreen browsers that support MSE also expose MCAP; no
+fallback path is implemented.
 
 ## Testing
 
 Extend `test/utils/stream_utils.test.ts`:
 
-- Stub `navigator.mediaCapabilities.decodingInfo` per case (and
-  `MediaSource.isTypeSupported` for the fallback case).
+- Stub `navigator.mediaCapabilities.decodingInfo` per case.
 - Build manifests via `test/__framework__/factories.ts`.
 - Cases:
   - All streams supported → all streams kept, each carries
@@ -234,17 +224,12 @@ Extend `test/utils/stream_utils.test.ts`:
     excluded from the flat list, supported ones kept.
   - Entire switching set unsupported → its streams absent; flat
     list still non-empty from other sets.
-  - All video tracks unsupported → throws
-    `ManifestUnsupportedError`.
-  - All audio tracks unsupported → throws.
-  - Audio-only manifest with all audio supported and zero video
-    streams → does not throw (no video to begin with).
+  - All video tracks unsupported → video list is empty, no throw.
+  - All audio tracks unsupported → audio list is empty, no throw.
   - Subtitle streams pass through untouched (no symbol, no probe
     call recorded).
   - Probe cache: same `Track` across two `buildStreams` calls →
     `decodingInfo` invoked once.
-  - Fallback path (no `mediaCapabilities`) produces synthesised
-    result with `smooth: false`, `powerEfficient: false`.
 
 ## Files touched
 
