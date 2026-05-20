@@ -300,5 +300,26 @@ describe("StreamUtils", () => {
       expect(video).toHaveLength(1);
       expect(video[0]!.codec).toBe("avc");
     });
+
+    it("returns an empty video list when every video track is unsupported", async () => {
+      mockMediaCapabilities(createDecodingInfo({ supported: false }));
+      const manifest = createManifest({
+        switchingSets: [createVideoSwitchingSet()],
+      });
+      const streams = await buildStreams(manifest);
+      expect(streams.get(MediaType.VIDEO) ?? []).toEqual([]);
+    });
+
+    it("returns an empty audio list when every audio track is unsupported", async () => {
+      const spy = mockMediaCapabilities();
+      spy.mockImplementation(async (config: MediaDecodingConfiguration) =>
+        createDecodingInfo({ supported: config.audio === undefined }),
+      );
+      const manifest = createManifest();
+      const streams = await buildStreams(manifest);
+      expect(streams.get(MediaType.AUDIO) ?? []).toEqual([]);
+      // Video must still be present.
+      expect((streams.get(MediaType.VIDEO) ?? []).length).toBe(1);
+    });
   });
 });
