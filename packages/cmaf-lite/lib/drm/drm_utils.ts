@@ -1,5 +1,5 @@
+import { KeySystem } from "../types/drm";
 import type { KeySystemInfo } from "../types/manifest";
-import { KeySystem } from "../types/media";
 
 const KEY_SYSTEM_BY_UUID: Record<string, KeySystem> = {
   "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed": KeySystem.WIDEVINE,

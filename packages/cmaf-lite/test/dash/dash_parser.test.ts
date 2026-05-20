@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as DashParser from "../../lib/dash/dash_parser";
-import { KeySystem, MediaType } from "../../lib/types/media";
+import { EncryptionScheme, KeySystem } from "../../lib/types/drm";
+import { MediaType } from "../../lib/types/media";
 import { loadFixture } from "../fixtures";
 import { findAudio, findSubtitle, findVideo } from "./helpers";
 
@@ -573,7 +574,7 @@ describe("DashParser", () => {
         sourceUrl,
       );
       const video = findVideo(manifest);
-      expect(video.protection?.scheme).toBe("cenc");
+      expect(video.protection?.scheme).toBe(EncryptionScheme.CENC);
       expect(video.protection?.defaultKid).toBe(
         "abcdef01-2345-6789-abcd-ef0123456789",
       );
@@ -596,7 +597,7 @@ describe("DashParser", () => {
         sourceUrl,
       );
       const video = findVideo(manifest);
-      expect(video.protection?.scheme).toBe("cenc");
+      expect(video.protection?.scheme).toBe(EncryptionScheme.CENC);
       expect(
         video.protection?.keySystems[KeySystem.WIDEVINE]?.pssh,
       ).toBeInstanceOf(Uint8Array);
@@ -608,7 +609,7 @@ describe("DashParser", () => {
         sourceUrl,
       );
       const video = findVideo(manifest);
-      expect(video.protection?.scheme).toBe("cbcs");
+      expect(video.protection?.scheme).toBe(EncryptionScheme.CBCS);
       expect(video.protection?.keySystems[KeySystem.FAIRPLAY]?.contentId).toBe(
         "skd://example/abc123",
       );

@@ -4,12 +4,13 @@ import {
   PROP_HIERARCHY,
   PROP_KEY_SYSTEM_ACCESS,
 } from "../../lib/constants";
+import { KeySystem } from "../../lib/types/drm";
 import type {
   AudioStream,
   Preference,
   VideoStream,
 } from "../../lib/types/media";
-import { KeySystem, MediaType } from "../../lib/types/media";
+import { MediaType } from "../../lib/types/media";
 import {
   buildStreams,
   findStreamsMatchingPreferences,

@@ -17,17 +17,6 @@ export enum MediaType {
 }
 
 /**
- * Canonical key system identifiers for EME.
- *
- * @public
- */
-export enum KeySystem {
-  WIDEVINE = "com.widevine.alpha",
-  PLAYREADY = "com.microsoft.playready.recommendation",
-  FAIRPLAY = "com.apple.fps",
-}
-
-/**
  * Media types backed by a SourceBuffer.
  *
  * @public

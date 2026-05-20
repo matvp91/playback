@@ -3,7 +3,7 @@ import {
   keySystemFromSchemeIdUri,
   keySystemInfoFromRaw,
 } from "../../lib/drm/drm_utils";
-import { KeySystem } from "../../lib/types/media";
+import { KeySystem } from "../../lib/types/drm";
 
 describe("keySystemFromSchemeIdUri", () => {
   it("maps known Widevine UUID", () => {

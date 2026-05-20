@@ -10,7 +10,7 @@ import type {
   Stream,
   VideoStream,
 } from ".";
-import type { KeySystem } from "./types/media";
+import type { KeySystem } from "./types/drm";
 
 /**
  * Event name constants emitted by the {@link Player}.

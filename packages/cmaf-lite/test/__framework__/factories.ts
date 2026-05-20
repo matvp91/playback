@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { DrmConfig } from "../../lib/config";
+import { EncryptionScheme, KeySystem } from "../../lib/types/drm";
 import type {
   InitSegment,
   Manifest,
@@ -9,7 +10,7 @@ import type {
   Track,
 } from "../../lib/types/manifest";
 import { LANGUAGE_UNKNOWN } from "../../lib/types/manifest";
-import { KeySystem, MediaType } from "../../lib/types/media";
+import { MediaType } from "../../lib/types/media";
 
 export function createInitSegment(
   overrides?: Partial<InitSegment>,
@@ -158,7 +159,7 @@ export function mockMediaCapabilities(
 
 export function createProtection(overrides?: Partial<Protection>): Protection {
   return {
-    scheme: "cenc",
+    scheme: EncryptionScheme.CENC,
     defaultKid: "abcdef01-2345-6789-abcd-ef0123456789",
     keySystems: {
       [KeySystem.WIDEVINE]: { pssh: new Uint8Array([1, 2, 3, 4]) },

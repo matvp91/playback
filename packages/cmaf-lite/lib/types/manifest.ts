@@ -1,4 +1,5 @@
-import type { KeySystem, MediaType } from "./media";
+import type { EncryptionScheme, KeySystem } from "./drm";
+import type { MediaType } from "./media";
 
 /**
  * Unknown language.
@@ -8,26 +9,21 @@ import type { KeySystem, MediaType } from "./media";
 export const LANGUAGE_UNKNOWN = "unk";
 
 /**
- * Encryption metadata for a switching set, derived from DASH
- * `<ContentProtection>` elements.
+ * Encryption metadata.
  *
  * @public
  */
 export interface Protection {
-  /** Encryption scheme — AES-CTR (`cenc`) or AES-CBC subsample (`cbcs`). */
-  scheme: "cenc" | "cbcs";
-  /** Default Key ID, lowercased dashed UUID, from `cenc:default_KID`. */
+  /** Encryption scheme. */
+  scheme: EncryptionScheme;
+  /** Default Key ID. */
   defaultKid: string;
-  /**
-   * Per-key-system init material. Empty when the manifest only carries
-   * the generic `mp4protection` element without any key-system entry.
-   */
+  /** Per-key-system init material. */
   keySystems: Partial<Record<KeySystem, KeySystemInfo>>;
 }
 
 /**
- * Per-key-system init material parsed from a DASH `<ContentProtection>`
- * element.
+ * Per-key-system init material.
  *
  * @public
  */

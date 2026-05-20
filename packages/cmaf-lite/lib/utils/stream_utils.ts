@@ -4,6 +4,7 @@ import {
   PROP_HIERARCHY,
   PROP_KEY_SYSTEM_ACCESS,
 } from "../constants";
+import { KeySystem } from "../types/drm";
 import type { Manifest, SwitchingSet, Track } from "../types/manifest";
 import type {
   AudioStream,
@@ -11,7 +12,7 @@ import type {
   Stream,
   VideoStream,
 } from "../types/media";
-import { KeySystem, MediaType } from "../types/media";
+import { MediaType } from "../types/media";
 import * as asserts from "./asserts";
 import * as CodecUtils from "./codec_utils";
 

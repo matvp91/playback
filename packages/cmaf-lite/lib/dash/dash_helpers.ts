@@ -3,12 +3,13 @@ import {
   keySystemFromSchemeIdUri,
   keySystemInfoFromRaw,
 } from "../drm/drm_utils";
+import type { KeySystem } from "../types/drm";
+import { EncryptionScheme } from "../types/drm";
 import type {
   KeySystemInfo,
   Protection,
   SwitchingSet,
 } from "../types/manifest";
-import type { KeySystem } from "../types/media";
 import { MediaType } from "../types/media";
 import * as asserts from "../utils/asserts";
 import * as Functional from "../utils/functional";
@@ -178,7 +179,7 @@ export function resolveProtection(
     return null;
   }
 
-  let scheme: "cenc" | "cbcs" | null = null;
+  let scheme: EncryptionScheme | null = null;
   let defaultKid: string | null = null;
   const keySystems: Partial<Record<KeySystem, KeySystemInfo>> = {};
 
@@ -192,7 +193,7 @@ export function resolveProtection(
     // and default_KID.
     if (schemeIdUri === "urn:mpeg:dash:mp4protection:2011") {
       const value = XmlUtils.attr(el, "value", XmlUtils.parseString);
-      if (value === "cenc" || value === "cbcs") {
+      if (value === EncryptionScheme.CENC || value === EncryptionScheme.CBCS) {
         scheme = value;
       }
       const kid = XmlUtils.attr(el, "cenc:default_KID", XmlUtils.parseString);
