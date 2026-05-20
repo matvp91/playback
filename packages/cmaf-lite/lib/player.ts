@@ -128,7 +128,7 @@ export class Player extends EventEmitter<EventMap> {
    * Returns the currently active stream for the given type.
    */
   getActiveStream<T extends MediaType>(type: T) {
-    return this.streamController_.getStream(type) ?? null;
+    return this.streamController_.getActiveStream(type) ?? null;
   }
 
   /**
